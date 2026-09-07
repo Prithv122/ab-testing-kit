@@ -9,6 +9,72 @@ Keep it rough. Rough is the point.
 
 ## Log
 
+### 2026-09-07 — session 2a: sequential.py (O'Brien–Fleming alpha spending)
+
+- **Built:** `sequential.py` — two spending functions (O'Brien–Fleming, Pocock), the boundary
+  solver, `run_sequential` / `sequential_study` / `sequential_error_curve`, plus `sequential`
+  and `boundary` CLI subcommands. 44 new tests, still 100% statement coverage.
+
+- **The one real decision: how to compute the boundary.** There is no closed form past the
+  first look, because the looks are *correlated* — look 3 contains look 2's data. So the
+  critical values come from the standard recursive numerical integration (Armitage–McPherson–
+  Rowe): under the null the cumulative score B(t) is Brownian motion, the continuation region
+  after each look carries a sub-density, and the next look convolves it forward with a
+  Gaussian increment. Each critical value is then a root-find against the spending schedule.
+  The alternative was quoting a published boundary table, which would have been the exact
+  thing this repo exists not to do.
+
+- **The trick that made it fast enough to root-find.** The naive form of the survival
+  probability is a double integral (over the new continuation region, and over the old
+  sub-density), which is O(n²) per trial boundary. But the inner integral is a Gaussian CDF
+  difference in closed form, so it collapses to a *single* O(n) pass over the previous grid.
+  The O(n²) convolution then only has to run once per look, after the boundary is known,
+  rather than once per brentq iteration.
+
+- **Broke:** the first look of a 20-look O'Brien–Fleming design budgets about **2e-18** of
+  alpha. No quadrature scheme resolves that — the solver was being asked to fit its own
+  rounding error, and `brentq` returned junk.
+  **Fixed by:** a floor (`_MIN_SPEND = 1e-9`). Below it the look gets an `inf` boundary and
+  simply cannot reject. Considered and rejected: clamping to a large finite z (arbitrary), or
+  loosening the target (silently spends alpha the schedule did not authorise). The `inf`
+  version is conservative by construction, and because the recursion targets *cumulative*
+  spend the unspent budget rolls into the next look automatically — the total still lands on
+  0.05 to 1e-9. The CLI prints those looks as `never`, which is honest and reads well.
+
+- **Validated it two independent ways, which is the part I would talk about.** I could not
+  remember a published boundary table with any confidence, and half-remembering one would
+  have been worse than useless. So:
+  1. **Against the process itself.** Simulate standardised Brownian motion at the information
+     times, count boundary crossings. Shares no code with the recursion. 200k paths, six
+     configurations — every one inside 2 SE of 0.05.
+  2. **Against a value I could check independently.** The Pocock boundary is *supposed* to be
+     near-constant, and the classical constants are things I could sanity-check by shape:
+     the solver produces 2.4380/2.4268/2.4102/2.3966/2.3860 for K=5 (published constant
+     2.413), 2.2794…2.2959 for K=3 (2.289), ~2.55 for K=10 (2.555). Landing on those without
+     being told them is strong evidence the recursion is right.
+  Plus the cheap ones: K=1 returns 1.959964 exactly (a one-look sequential design *is* a
+  fixed-horizon test), and refining the quadrature from 401 to 1601 nodes moves nothing past
+  the 5th decimal.
+
+- **Added `mean_abs_estimate` to `SimulationSummary`**, which session 1's notes said to do.
+  The signed bias cancels under a two-sided null, so the magnitude column is the only one
+  that shows the winner's curse there. Both are now printed by the `peeking` *and*
+  `sequential` tables, which share a printer so the two are directly comparable on the page.
+
+- **Kept `TestResult.significant` as the naive per-look verdict** rather than overwriting it
+  with the sequential decision. `SequentialOutcome.rejected` is the sequential call. The two
+  disagreeing constantly *is* the correction working, and there is a test that pins exactly
+  that. Documented loudly in `SequentialOutcome.final` because it is an obvious footgun.
+
+- **Suite time went from ~60s to ~105s** and that is the real cost of this session. Same root
+  cause session 1 recorded: scalar scipy calls, one per look per replication, and a
+  sequential run under the null almost never stops early so it pays for *every* look. Cut
+  replications in the new tests until each assertion still sat at ≥2.5 SE and stopped there.
+  With `cuped.py` and `bayes.py` still to come this is now the binding constraint, and the
+  vectorisation logged in README §7 has stopped being theoretical.
+
+---
+
 ### 2026-09-07 — session 1: simulation, design, peeking
 
 - **Built:** `simulation.py` (seeded generation + shared result types), `design.py`
@@ -82,6 +148,11 @@ Keep it rough. Rough is the point.
 | Approach | Why rejected |
 |---|---|
 | **mSPRT** for the sequential test | Locked to group-sequential alpha spending instead. mSPRT is more conceptually and implementationally heavy than this toolkit's teaching objective needs — it requires choosing a mixing distribution, and the resulting boundary is hard to inspect. With O'Brien–Fleming-style alpha spending a reader can *see* the significance boundary tighten as looks accumulate, and can check the spent alpha sums to 0.05. Explainability is the deliverable here. |
+| **Quoting a published boundary table** instead of solving for it | The entire premise of the repo is that claims are checked here, not cited. A table I cannot re-derive is a citation. Solving it also means the boundary adapts to whatever schedule `peek_schedule` produces, including the uneven ones that come out of `min_look_size` dropping early looks. |
+| Clamping an unresolvable alpha increment to a large finite z | Arbitrary — the number would be picked to look reasonable rather than derived. `inf` says the true thing: this look cannot reject. |
+| Overwriting `TestResult.significant` with the sequential verdict | Would destroy the like-for-like comparison between the naive and corrected rules on identical data, which is the whole demonstration. Kept both, documented the distinction. |
+| Only implementing O'Brien–Fleming | Pocock costs one function and turns "sequential testing controls error" into a measurable tradeoff between two shapes — early stopping against final-look power. The contrast is the finding. |
+| mSPRT / always-valid p-values | Still rejected, same reason as session 1: explainability is the deliverable. Now with a concrete demonstration of what explainable buys — `ab-testing-kit boundary` prints the bar tightening look by look and the alpha summing to 0.050000. |
 | Real public dataset instead of simulation | No public dataset carries both the pre-experiment covariates CUPED needs **and** a known true effect. Without known ground truth, "measured Type-I error" is not measurable — there is nothing to be wrong against. Simulation is not a shortcut here, it is the only way the central claim can be checked. Stated plainly in the README next to every number. |
 | One-sided tests | Would need a matching one-sided path in `fixed_horizon_test`. Shipping a `two_sided=False` parameter that no simulation validates would directly undercut the point of the repo. Two-sided everywhere, documented as a limitation. |
 | Unpooled SE for the binary p-value | Pooling assumes the null, which is correct for a test statistic. Kept pooled for the p-value and unpooled for the CI, which means the two can disagree at the margin. That is correct behaviour, not a bug — noted in the docstring so a future me does not "fix" it. |
@@ -91,6 +162,20 @@ Keep it rough. Rough is the point.
 
 ## Open questions
 
+- [ ] Information fraction is taken as `n_k / n_max`, which assumes the outcome variance is
+      constant across looks. Under the null it is. Under a real alternative the treatment arm
+      variance differs slightly, so the realised information fraction drifts from the planned
+      one. Standard practice plans on the design-time value and the measured Type-I error says
+      it does no harm here — but "it does no harm at a 10% base rate with a 2pp lift" is not
+      the same as "it never matters", and I have not tested a case where it would.
+- [ ] The confidence interval reported at a sequential stop is the naive one. It undercovers,
+      for exactly the reason the point estimate is biased. Stage-wise-ordering intervals are
+      the fix and are not implemented; right now the honest reading is that `SequentialOutcome`
+      gives a trustworthy *decision* and an optimistic *estimate*. Should probably say that in
+      the README next to the bias number rather than only here.
+- [ ] `_MIN_SPEND = 1e-9` is set from a rough error estimate for 1001-node Simpson, not from a
+      measured one. It is conservative in the right direction, but I have not actually measured
+      the quadrature error to confirm the floor sits where I think it does.
 - [ ] For binary metrics the CUPED covariate is generated through a latent-normal copula, so
       the realised correlation between the two 0/1 indicators is **attenuated** relative to
       the requested `covariate_corr`. Currently documented and asserted as a range rather

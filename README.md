@@ -7,8 +7,8 @@
 **Live demo:** not deployed — CLI + notebook, runs locally
 **Stack:** Python 3.13 · numpy · scipy · pytest · ruff · uv
 
-> **Status: session 1 of 3.** Power analysis and the peeking demonstration are complete and
-> validated. Group-sequential alpha spending, CUPED, and the Bayesian comparison are the
+> **Status: session 2 of 3.** Power analysis, the peeking demonstration and group-sequential
+> alpha spending are complete and validated. CUPED and the Bayesian comparison are the
 > remaining modules; §5 grows as each lands.
 
 ---
@@ -61,8 +61,11 @@ flowchart LR
     end
 
     C -.->|"truncate(k)"| G["peeking.py<br/>stop at first green"]
+    G -->|"peek_schedule<br/>same analysis points"| S["sequential.py<br/>stop at the boundary"]
+    P["alpha_spending_boundary<br/>Brownian recursion,<br/>solved per schedule"] --> S
     F --> H["design.py<br/>n, MDE, power"]
     G --> F
+    S --> F
     H -->|"validate_power"| F
 
     F --> I["cli.py<br/>deterministic output"]
@@ -73,8 +76,12 @@ flowchart LR
 ```
 
 Every module answers a statistical question against the *same* generated experiments. That
-is what makes the comparisons in §5 apples-to-apples: the fixed-horizon row and the peeking
-rows below differ only in the decision rule applied, never in the underlying data or seed.
+is what makes the comparisons in §5 apples-to-apples: the fixed-horizon, peeking and
+sequential rows below differ only in the decision rule applied, never in the underlying data
+or seed. `sequential.py` goes one step further and reuses `peeking.py`'s own `peek_schedule`,
+so the corrected rule analyses the data at *exactly* the same sample sizes the naive one
+does. The only difference left between §5.2 and §5.4 is the number each look is compared
+against.
 
 ## 4. Key decisions & tradeoffs
 
@@ -87,6 +94,10 @@ rows below differ only in the decision rule applied, never in the underlying dat
 | Test sidedness | Two-sided only | A `two_sided` flag | A one-sided design needs a matching one-sided analysis path. Shipping a parameter no simulation validates would undercut the point of the repo. Documented as a limitation instead. |
 | Reporting the rate | Wilson CI on the **rejection rate itself** | Bare point estimate | "Measured error 0.0512" from 10,000 runs carries ±0.004 of Monte Carlo error. Without that interval, a claim that a method controls error is unfalsifiable. |
 | Estimate averaging | Over **rejections only** | Over all replications | Averaging over everything hides the winner's curse entirely — the whole second finding in §5. |
+| Sequential boundary | Solved here by recursive integration over the Brownian sub-density | Quoting a published boundary table | The premise of the repo is that claims are checked rather than cited, and a table I cannot re-derive is a citation. Solving it also means the boundary adapts to whatever schedule `peek_schedule` produces, including uneven ones. Validated against a direct simulation of the process it integrates — §5.4. |
+| Unresolvable alpha budgets | Mark the look `inf`: it cannot reject | Clamp to a large finite z, or loosen the target | The first of twenty O'Brien–Fleming looks budgets ~2e-18, below any quadrature's noise floor. Clamping picks a number to look reasonable; loosening spends alpha the schedule never authorised. `inf` is conservative by construction and the unspent budget rolls forward, so the total still lands on 0.050000. |
+| Spending functions | Both O'Brien–Fleming and Pocock | OBF alone | One function shows that sequential testing controls error. Two turn it into a measurable tradeoff — early stopping against final-look power — which is the part worth knowing. |
+| Per-look verdicts | Keep the naive `significant` flag beside the sequential decision | Overwrite it with the corrected call | The two disagreeing is the correction doing its job, and keeping both is what makes the like-for-like comparison possible at all. Documented as a footgun and pinned by a test. |
 | Where results come from | Long CLI runs | The test suite | Tests check correctness and must stay fast; results need many replications. Conflating them gave a 117s suite *and* imprecise numbers. |
 
 ## 5. Results
@@ -211,12 +222,20 @@ uv run ab-testing-kit validate-power --metric binary --baseline 0.10 --n 3841 --
 
 # What does checking the dashboard every day cost me?
 uv run ab-testing-kit peeking --metric binary --baseline 0.10 --n 3841 --looks 1,2,3,5,10,20
+
+# What bar does each look have to clear if I want to keep my 5%?
+uv run ab-testing-kit boundary --n 3841 --looks 5
+
+# Does spending the alpha actually hold the error rate?
+uv run ab-testing-kit sequential --metric binary --baseline 0.10 --n 3841 --looks 1,2,3,5,10,20
 ```
 
 `--help` on any subcommand lists its options. Every command is deterministic given `--seed`.
 
-Runtime note: the headline `peeking` run at `--sims 20000` takes several minutes. Drop to
-`--sims 2000` for a fast look — the pattern is identical, the intervals are wider.
+Runtime note: the headline `peeking` and `sequential` runs at `--sims 20000` take several
+minutes each, and `sequential` is the slower of the two because under the null it almost
+never stops early and so pays for every look. Drop to `--sims 2000` for a fast look — the
+pattern is identical, the intervals are wider. `boundary` is instant; it does no simulation.
 
 ## 7. What I'd change at 100× scale
 
@@ -252,3 +271,8 @@ Runtime note: the headline `peeking` run at `--sims 20000` takes several minutes
   Rates and Proportions* (pooled variance under the null, no continuity correction).
 - Welch–Satterthwaite degrees of freedom, and the Wilson score interval, are implemented
   from their standard definitions and cross-checked against `scipy.stats` in the test suite.
+- The alpha-spending formulation follows Lan and DeMets; the O'Brien–Fleming and Pocock
+  spending functions are their standard closed forms. The boundary solver is the recursive
+  numerical integration described by Armitage, McPherson and Rowe, implemented here from the
+  Brownian-motion characterisation rather than transcribed. No published boundary table was
+  consulted — §5.4 says how the result was checked instead.
