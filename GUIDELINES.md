@@ -18,8 +18,8 @@ simulation in this repo**, not quoted from a blog post.
 
 ## Stack
 
-Python 3.13 · numpy · scipy · pytest · ruff · uv. (matplotlib arrives with the notebook
-in session 3; pandas is not needed and was not added.)
+Python 3.13 · numpy · scipy · matplotlib · pytest · ruff · uv · nbmake (CI executes the
+notebook). pandas is not needed and was not added.
 No services, no Docker, no GPU, no API keys. Runs entirely locally and in CI.
 
 ## Acceptance criteria
@@ -29,7 +29,7 @@ No services, no Docker, no GPU, no API keys. Runs entirely locally and in CI.
 - [x] A sequential/always-valid test that holds its error rate under the same peeking
 - [x] CUPED implemented, with measured variance reduction vs the covariate correlation
 - [x] Bayesian analysis (posterior, P(B>A), expected loss) compared to the frequentist call
-- [ ] README §5 carries real numbers, all reproducible from this repo
+- [x] README §5 carries real numbers, all reproducible from this repo
 - [ ] Ship gate passes (`/ship`)
 
 ## Project-specific notes

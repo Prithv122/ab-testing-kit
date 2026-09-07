@@ -5,11 +5,11 @@
 [![CI](https://github.com/Prithv122/ab-testing-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/Prithv122/ab-testing-kit/actions/workflows/ci.yml)
 
 **Live demo:** not deployed — CLI + notebook, runs locally
-**Stack:** Python 3.13 · numpy · scipy · pytest · ruff · uv
+**Stack:** Python 3.13 · numpy · scipy · matplotlib · pytest · ruff · uv
 
-> **Status: session 2 of 3.** Power analysis, the peeking demonstration, group-sequential
-> alpha spending and CUPED are complete and validated. The Bayesian comparison is the one
-> remaining module; §5 grows as it lands.
+> **Status: complete.** All five topics — power analysis, peeking, group-sequential alpha
+> spending, CUPED and the Bayesian comparison — are implemented and validated by simulation.
+> Every figure in §5 carries the command that regenerates it.
 
 ---
 
@@ -19,12 +19,18 @@ A team runs a checkout experiment, watches the dashboard daily, and ships the va
 morning it first goes green. They believe they are accepting a 5% chance of being wrong,
 because that is the number on the tool. They are not.
 
-This toolkit exists to answer the questions a product data scientist gets asked *before* an
-experiment starts — how many users do we need, what can we actually detect, when are we
-allowed to look — and to prove its answers rather than assert them. Statistical libraries
-generally state that a method controls error at some rate. Here, the repository generates
-experiments with a **known** true effect, applies the method thousands of times, and reports
-the rate that actually came out, with a confidence interval on that rate.
+This toolkit exists to answer the questions a product data scientist actually gets asked, and
+to prove its answers rather than assert them:
+
+- **How many users do we need, and what can we detect with the traffic we have?** (§5.1)
+- **What does watching the dashboard cost?** (§5.2, §5.3)
+- **Can we keep the daily check and keep the 5%?** (§5.4)
+- **Can we make the experiment cheaper with data we already have?** (§5.5)
+- **Would going Bayesian have avoided any of this?** (§5.6)
+
+Statistical libraries generally state that a method controls error at some rate. Here, the
+repository generates experiments with a **known** true effect, applies the method thousands of
+times, and reports the rate that actually came out, with a confidence interval on that rate.
 
 That inversion is the whole design: a claim you can check is worth more than a claim you
 can cite.
@@ -65,6 +71,8 @@ flowchart LR
     P["alpha_spending_boundary<br/>Brownian recursion,<br/>solved per schedule"] --> S
     C -->|"pre-experiment covariate"| U["cuped.py<br/>adjust the metric,<br/>not the rule"]
     U -->|"adjusted Experiment"| D
+    G -->|"peek_schedule"| Y["bayes.py<br/>posterior decision rules"]
+    Y --> F
     F --> H["design.py<br/>n, MDE, power"]
     G --> F
     S --> F
@@ -90,6 +98,10 @@ against.
 everything downstream — the fixed-horizon test, the peeking study, the spending boundary —
 works on adjusted data without knowing anything about CUPED.
 
+`bayes.py` takes `peek_schedule` too, which is what makes §5.6 possible: the Bayesian stopping
+rule, the naive one and the spending boundary are all measured on the same experiments at the
+same sample sizes, so the three curves in that section can be read against each other directly.
+
 ## 4. Key decisions & tradeoffs
 
 | Decision | Chose | Over | Why |
@@ -108,6 +120,8 @@ works on adjusted data without knowing anything about CUPED.
 | CUPED reporting | Report the **realised** covariate correlation | The `covariate_corr` that was requested | A binary covariate is generated through a latent-normal copula, so a requested 0.8 realises about 0.51 and buys 26% rather than 64%. CUPED is not underperforming — it delivers `1 - rho²` against the correlation the data actually has. Printing both is the only way that reads as a fact rather than a bug. |
 | CUPED covariate generation | Leave the attenuation in, and explain it | Solve `covariate_corr` numerically so the realised value matches the request | A tidier API that makes a true and non-obvious property of binary covariates invisible. The gap is worth more as a lesson than the parameter is as a convenience. |
 | CUPED output type | Return an ordinary `Experiment` | A bespoke result type | Composition: the adjusted experiment flows into every other module unchanged. The cost is that `theta` is fitted on whatever is handed in, so adjust-then-truncate would leak the future into an interim look — `cuped_at_each_look` exists to make the right order the easy one. |
+| Bayesian threshold | Report 0.95 **and** the matched 0.975 | 0.95 alone, as the convention | `P(B>A) > 0.95` is a one-sided 5% rule; a two-sided α = 0.05 ships at 2.5%. Comparing them directly measures the thresholds rather than the frameworks. Reporting both is what turns a vague "they mostly agree" into §5.6's actual finding. |
+| Posterior computation | Normal approximation to the Beta-Binomial | Exact summation identity, or MC sampling | ~400× cheaper for ~1e-4 of accuracy at these sample sizes, which is the difference between a 20,000-replication monitoring study running and not. Checked against direct sampling from the posterior rather than assumed. |
 | Where results come from | Long CLI runs | The test suite | Tests check correctness and must stay fast; results need many replications. Conflating them gave a 117s suite *and* imprecise numbers. |
 
 ## 5. Results
@@ -381,6 +395,110 @@ This is why the sweep reports the realised correlation next to the requested one
 generator so the two matched would have made the API tidier and this fact invisible.
 
 
+### 5.6 Bayesian decision rules: same arithmetic, different sentence
+
+The usual framing is that this is a philosophical choice. Measured on identical data, it
+mostly is not.
+
+#### The frameworks barely disagree — and where they do, it is the threshold
+
+```bash
+uv run ab-testing-kit agreement --metric binary --baseline 0.10 --n 3841 --effect 0.02 --sims 20000 --seed 0
+```
+
+20,000 replications, true effect 0.02. The frequentist rule is a two-sided α = 0.05 test that
+ships on a positive result.
+
+| Ship when P(B>A) ≥ | Agreement | Both ship | Both hold | Bayes only | Frequentist only |
+|---:|---:|---:|---:|---:|---:|
+| 0.950 | 0.9228 | 16,015 | 2,441 | **1,544** | 0 |
+| **0.975** | **0.9999** | 16,012 | 3,985 | 0 | **3** |
+| 0.990 | 0.8817 | 13,649 | 3,985 | 0 | **2,366** |
+
+Mean `|P(B>A) − (1 − p/2)|` = **4.0e-5**. The two frameworks are not computing different
+things. They are computing the same number and licensing different sentences about it.
+
+The disagreements at 0.95 run **entirely one way**, and that is the diagnostic. A genuine
+philosophical difference would scatter in both directions; one-directional disagreement is the
+signature of a mismatched threshold. And here is the mismatch:
+
+- `P(B > A) > 0.95` is a **one-sided 5%** rule.
+- A two-sided α = 0.05 ships on a positive result at **2.5%**.
+
+So the industry-standard posterior threshold is **twice as permissive in the ship direction**
+as the industry-standard p-value threshold. Every "Bayesian methods ship more winners"
+comparison built on that pairing is measuring the thresholds, not the frameworks. Match them
+at 0.975 and the disagreement rate falls from 1-in-13 to **3-in-20,000** — and overshoot to
+0.99 and the asymmetry cleanly reverses, which is what you would expect if thresholds were all
+that was ever going on.
+
+The same sweep on a continuous metric agrees at 0.9998 (4 disagreements in 20,000, mean gap
+2.5e-5). The residual in both cases is traceable and small: a rate metric keeps its Beta(1,1)
+prior, which shrinks the estimate a hair, and a continuous metric meets Welch's **t** on one
+side and a **normal** posterior on the other, which differ slightly in the tail. Neither is
+philosophy.
+
+#### Does going Bayesian fix peeking? No.
+
+This is the claim worth testing carefully, because it is usually stated imprecisely. Same
+substrate, same `peek_schedule`, same stop-at-first-green shape as §5.2 — only the rule
+changes.
+
+```bash
+uv run ab-testing-kit bayes --metric binary --baseline 0.10 --n 3841 --looks 1,2,3,5,10,20 --sims 20000 --seed 0
+```
+
+| Looks | Naive peeking (α = 0.05) | Bayesian (P > 0.95) | O'Brien–Fleming spending |
+|---:|---:|---:|---:|
+| 1 | 0.0497 | 0.0493 | 0.0497 |
+| 2 | 0.0837 | 0.0787 | 0.0498 |
+| 3 | 0.1076 | 0.0987 | 0.0498 |
+| 5 | 0.1403 | 0.1280 | 0.0515 |
+| 10 | 0.1915 | 0.1694 | 0.0519 |
+| 20 | **0.2470** | **0.2133** | **0.0515** |
+
+The Bayesian column inflates 4.3×; the frequentist one inflates 5.0×. Alpha spending is the
+only column that does not move.
+
+*(One caveat on reading that table across: the peeking column counts two-sided rejections
+while the Bayesian column counts one-sided ships. Each is the conventional rule in its own
+framework, which is what makes them worth putting side by side — but they are not the same
+event, and the near-identical values at one look are a coincidence of the two conventions,
+not a derivation.)*
+
+**What is actually true here matters.** A posterior is not invalidated by having been looked
+at — the posterior given the data is the posterior given the data, whenever you compute it.
+That much is correct and is usually what people mean. What does not follow is that a *stopping
+rule* built on a posterior threshold controls the rate at which it ships losers. It does not,
+and nothing about Bayesian machinery ever promised it would: that rate is a frequentist
+property. This is not a failure of Bayesian inference. It is people expecting a guarantee that
+was never on offer.
+
+The estimate is inflated the same way, too: the mean reported effect among shipped
+replications climbs from 0.0142 at one look to 0.0340 at twenty, on data with **no true
+effect at all**.
+
+#### So what is the Bayesian framing actually worth?
+
+Expected loss. `P(B > A) = 0.96` tells you the probability you are right; it says nothing about
+what being wrong would cost. `E[max(control − treatment, 0)]` — the average amount of metric
+surrendered by shipping, integrated over the posterior — does, and a threshold on it is a
+business statement rather than a statistical one:
+
+```bash
+uv run ab-testing-kit bayes --metric binary --baseline 0.10 --n 3841 --looks 20 --max-loss 0.0005
+```
+
+That is a genuine advantage over a p-value, it measurably curbs the monitoring inflation
+(though it does not remove it), and it survives everything else in this section. Which makes
+the honest recommendation a split one: **use the Bayesian machinery for how you frame the
+decision, and alpha spending for the error rate.** Neither tool does the other's job.
+
+One caution learned the hard way while testing this: expected loss shrinks
+super-exponentially in the z-statistic — 1.9e-131 for a five-sigma result — so a loss threshold
+has to be reasoned about in metric units against a real MDE, never picked as a round number.
+
+
 ## 6. How to run
 
 ```bash
@@ -414,7 +532,25 @@ uv run ab-testing-kit sequential --metric binary --baseline 0.10 --n 3841 --look
 
 # What is a pre-experiment covariate worth?
 uv run ab-testing-kit cuped --metric continuous --baseline 0 --n 2000 --effect 0.05
+
+# Does a Bayesian stopping rule survive the same monitoring?
+uv run ab-testing-kit bayes --metric binary --baseline 0.10 --n 3841 --looks 1,2,3,5,10,20
+
+# Do the two frameworks actually disagree?
+uv run ab-testing-kit agreement --metric binary --baseline 0.10 --n 3841 --effect 0.02
 ```
+
+The notebook walks through all five topics end to end with charts, at reduced replication
+counts so it runs in about a minute:
+
+```bash
+uv run --with jupyterlab jupyter lab notebooks/walkthrough.ipynb
+```
+
+JupyterLab is pulled in on demand rather than pinned as a dependency — it is needed to *read*
+the notebook interactively, not to run it. CI executes the notebook headlessly on every push
+(`uv run pytest --nbmake notebooks/`), so a notebook that only works on my machine fails the
+build rather than shipping quietly.
 
 `--help` on any subcommand lists its options. Every command is deterministic given `--seed`.
 
@@ -429,8 +565,14 @@ pattern is identical, the intervals are wider. `boundary` is instant; it does no
   (`norm.sf`, `t.ppf`) executed once per look per replication — a 20-look study at 20,000
   replications is up to 400,000 of them. Computing test statistics across all replications
   as arrays, and replacing per-call `ppf` with a precomputed critical value, is a 10–50×
-  win with no change to the statistics. Deliberately not done: for a repository whose
-  purpose is that a reader can verify the claims, obviously-correct beats fast.
+  win with no change to the statistics. The Bayesian path is the worst offender — each
+  `analyse` call makes about seven scalar scipy calls where the frequentist test makes three,
+  and one of them (`norm.isf` for the credible interval) is a constant being recomputed per
+  replication. Deliberately not done: for a repository whose purpose is that a reader can
+  verify the claims, obviously-correct beats fast. The measured price is a test suite that
+  now runs **209 seconds under coverage** (234 tests), against the 60 seconds this project's
+  own working rules ask for — so this has stopped being theoretical and is the next thing I
+  would actually do.
 - **Then parallelise across replications.** `SeedSequence.spawn` was chosen partly for this
   — the children are independent, so replications distribute across processes with no
   coordination and no change to results.
@@ -465,3 +607,7 @@ pattern is identical, the intervals are wider. `boundary` is instant; it does no
 - CUPED follows Deng, Xu, Kohavi and Walker's formulation (control for a pre-experiment
   covariate, `theta = Cov(Y,X)/Var(X)`, variance falls to `1 - rho²`). The identity is
   standard; §5.5 measures whether this implementation delivers it.
+- The Bayesian analysis uses standard conjugate results (Beta-Binomial for a rate, flat-prior
+  normal for a mean) and the expected-loss decision rule in the form used by commercial
+  experimentation platforms. The closed form for `E[max(-D, 0)]` under a normal posterior is
+  derived rather than cited, and cross-checked against direct posterior sampling in the tests.

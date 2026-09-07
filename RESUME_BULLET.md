@@ -31,9 +31,9 @@ Form: **action → technical specifics → measured outcome.** Numbers or it doe
   (mean |posterior − frequentist| = 4e-5), and demonstrated that a Bayesian stopping rule
   inflates under continuous monitoring just as the frequentist one does.
 
-- Shipped as a documented CLI + notebook with **100% statement coverage** (738 statements, 200+
-  tests) and green CI; every figure in the README carries the seeded command that regenerates
-  it from a clean clone.
+- Shipped as a documented CLI + executable notebook with **100% statement coverage** (928
+  statements, 234 tests) and green CI that runs the notebook headlessly on every push; every
+  figure in the README carries the seeded command that regenerates it from a clean clone.
 
 ## Which roles this supports
 

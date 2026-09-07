@@ -63,8 +63,10 @@ sequential case is the worst because under the null it almost never stops early,
 every look. Vectorising across replications and precomputing critical values instead of calling
 `ppf` in a loop is a 10–50× win with no change to the statistics. I deliberately didn't do it:
 for a repo whose purpose is that a reader can verify the claims, obviously-correct beat fast.
-It's the first thing in README §7, and by the end of session 2 the test suite had grown to ~105
-seconds, so it's stopped being theoretical.
+It's the first thing in README §7, and it's stopped being theoretical: once sequential and
+Bayesian monitoring landed the suite went to 209 seconds under coverage, against the 60 I'd set
+myself as a budget. I'd rather say that plainly than quietly relax the budget — it's over, and
+vectorising the analysis loop is the fix.
 
 Memory becomes the wall before CPU does at real scale — each replication materialises four full
 arrays, so at 10⁶ users per arm that's ~32 MB per replication. Streaming sufficient statistics

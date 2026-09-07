@@ -168,12 +168,19 @@ Keep it rough. Rough is the point.
   disagreeing constantly *is* the correction working, and there is a test that pins exactly
   that. Documented loudly in `SequentialOutcome.final` because it is an obvious footgun.
 
-- **Suite time went from ~60s to ~105s** and that is the real cost of this session. Same root
-  cause session 1 recorded: scalar scipy calls, one per look per replication, and a
-  sequential run under the null almost never stops early so it pays for *every* look. Cut
-  replications in the new tests until each assertion still sat at ≥2.5 SE and stopped there.
-  With `cuped.py` and `bayes.py` still to come this is now the binding constraint, and the
-  vectorisation logged in README §7 has stopped being theoretical.
+- **Suite time is the real cost of this session, and it is now over budget.** Session 1 left
+  it near 60s, which is the number this project's own rules ask for. After `sequential.py`,
+  `cuped.py` and `bayes.py` it measures **209s under coverage** across 234 tests. Same root
+  cause session 1 recorded: scalar scipy calls, one set per look per replication, and a
+  sequential run under the null almost never stops early so it pays for *every* look. The
+  Bayesian path is worse still — about seven scipy calls per `analyse` where the frequentist
+  test makes three, one of them a constant (`norm.isf` for the credible interval) recomputed
+  every replication.
+  **What I did:** cut replications in the new tests until each assertion still sat at ≥2.5 SE
+  and stopped there. **What I did not do:** relax the 60s rule to make the number look
+  compliant, or thin the tests below the point where they still prove anything. Recorded as a
+  known deviation instead. The honest fix is the vectorisation in README §7, and hoisting that
+  `norm.isf` constant is a free win before any of the harder work starts.
 
 ---
 

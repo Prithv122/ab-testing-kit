@@ -30,3 +30,8 @@ jobs:
 
       - name: Test
         run: uv run pytest --cov=src --cov-report=term-missing
+
+      # The notebook is a deliverable, so CI executes it top to bottom. A notebook that
+      # only runs on the author's machine is worse than no notebook.
+      - name: Notebook
+        run: uv run pytest --nbmake notebooks/

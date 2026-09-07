@@ -5,6 +5,7 @@ description = "Experiment design and analysis toolkit: power analysis, peeking/s
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "matplotlib>=3.11.1",
     "numpy>=2.5.3",
     "scipy>=1.18.1",
 ]
@@ -29,6 +30,8 @@ packages = ["src/ab_testing_kit"]
 
 [dependency-groups]
 dev = [
+    "ipykernel>=7.3.0",
+    "nbmake>=1.5.5",
     "pytest>=8.3",
     "pytest-cov>=6.0",
     "ruff>=0.9",
