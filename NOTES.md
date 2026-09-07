@@ -52,6 +52,27 @@ Keep it rough. Rough is the point.
   a reader checking the claims can afford to wait. Recorded in README §7 as the first thing
   to change at scale.
 
+- **Nearly shipped a misleading result.** The headline null run reported `est. bias` of
+  `+0.0002` at 20 looks, which reads as "no winner's curse" and directly contradicts what
+  `peeking.py`'s own docstring claims. Was about to write that up as a null finding.
+  **What was actually happening:** the test is two-sided, so under a true null the early
+  stops split symmetrically — measured 52.2% positive — and the signed mean cancels. The
+  inflation is entirely in the **magnitude**: mean |estimate| among stopped runs was 0.0368
+  vs 0.0054 for a single look at the horizon, a **6.8x** magnification.
+  **Learned:** `SimulationSummary.estimate_bias` being a *signed* mean is the right default
+  for the H1 case (where direction is the whole point) but is actively misleading under H0.
+  Documented both in README §5.3 rather than quietly reporting only the H1 number. If I add
+  one metric in session 2 it should be mean |estimate|, so the null case does not need a
+  paragraph of explanation to be read correctly.
+
+- **The peeking result is more interesting than "peeking is bad."** Under H1, 20 looks
+  *raised* power 80.1% → 88.4% and cut data use by 56% (3,841 → 1,707 per arm). That is why
+  people do it. The cost is 5x Type-I inflation under the null and a 68% overstatement of
+  the true effect. Framing it as a tradeoff rather than a mistake is both more honest and a
+  better answer to "so why does anyone peek?" — which is exactly what an interviewer asks
+  next. It is also precisely the gap group-sequential alpha spending is designed to close,
+  so §5.2/§5.3 set up session 2 rather than just scolding.
+
 - **Open at end of session:** `sequential.py`, `cuped.py`, `bayes.py`, the notebook.
 
 ---
