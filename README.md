@@ -7,9 +7,9 @@
 **Live demo:** not deployed — CLI + notebook, runs locally
 **Stack:** Python 3.13 · numpy · scipy · pytest · ruff · uv
 
-> **Status: session 2 of 3.** Power analysis, the peeking demonstration and group-sequential
-> alpha spending are complete and validated. CUPED and the Bayesian comparison are the
-> remaining modules; §5 grows as each lands.
+> **Status: session 2 of 3.** Power analysis, the peeking demonstration, group-sequential
+> alpha spending and CUPED are complete and validated. The Bayesian comparison is the one
+> remaining module; §5 grows as it lands.
 
 ---
 
@@ -63,6 +63,8 @@ flowchart LR
     C -.->|"truncate(k)"| G["peeking.py<br/>stop at first green"]
     G -->|"peek_schedule<br/>same analysis points"| S["sequential.py<br/>stop at the boundary"]
     P["alpha_spending_boundary<br/>Brownian recursion,<br/>solved per schedule"] --> S
+    C -->|"pre-experiment covariate"| U["cuped.py<br/>adjust the metric,<br/>not the rule"]
+    U -->|"adjusted Experiment"| D
     F --> H["design.py<br/>n, MDE, power"]
     G --> F
     S --> F
@@ -83,6 +85,11 @@ so the corrected rule analyses the data at *exactly* the same sample sizes the n
 does. The only difference left between §5.2 and §5.4 is the number each look is compared
 against.
 
+`cuped.py` is the odd one out, and deliberately so: it is the only module that changes the
+**metric** rather than the **decision rule**. It hands back an ordinary `Experiment`, so
+everything downstream — the fixed-horizon test, the peeking study, the spending boundary —
+works on adjusted data without knowing anything about CUPED.
+
 ## 4. Key decisions & tradeoffs
 
 | Decision | Chose | Over | Why |
@@ -98,6 +105,9 @@ against.
 | Unresolvable alpha budgets | Mark the look `inf`: it cannot reject | Clamp to a large finite z, or loosen the target | The first of twenty O'Brien–Fleming looks budgets ~2e-18, below any quadrature's noise floor. Clamping picks a number to look reasonable; loosening spends alpha the schedule never authorised. `inf` is conservative by construction and the unspent budget rolls forward, so the total still lands on 0.050000. |
 | Spending functions | Both O'Brien–Fleming and Pocock | OBF alone | One function shows that sequential testing controls error. Two turn it into a measurable tradeoff — early stopping against final-look power — which is the part worth knowing. |
 | Per-look verdicts | Keep the naive `significant` flag beside the sequential decision | Overwrite it with the corrected call | The two disagreeing is the correction doing its job, and keeping both is what makes the like-for-like comparison possible at all. Documented as a footgun and pinned by a test. |
+| CUPED reporting | Report the **realised** covariate correlation | The `covariate_corr` that was requested | A binary covariate is generated through a latent-normal copula, so a requested 0.8 realises about 0.51 and buys 26% rather than 64%. CUPED is not underperforming — it delivers `1 - rho²` against the correlation the data actually has. Printing both is the only way that reads as a fact rather than a bug. |
+| CUPED covariate generation | Leave the attenuation in, and explain it | Solve `covariate_corr` numerically so the realised value matches the request | A tidier API that makes a true and non-obvious property of binary covariates invisible. The gap is worth more as a lesson than the parameter is as a convenience. |
+| CUPED output type | Return an ordinary `Experiment` | A bespoke result type | Composition: the adjusted experiment flows into every other module unchanged. The cost is that `theta` is fitted on whatever is handed in, so adjust-then-truncate would leak the future into an interim look — `cuped_at_each_look` exists to make the right order the easy one. |
 | Where results come from | Long CLI runs | The test suite | Tests check correctness and must stay fast; results need many replications. Conflating them gave a 117s suite *and* imprecise numbers. |
 
 ## 5. Results
@@ -191,10 +201,26 @@ of expensive.
 Note that even a single look at a fixed horizon overstates by 12%: conditioning on
 significance is *always* mildly optimistic. Peeking multiplies an effect that already exists.
 
-For completeness, the magnitude claim in the paragraph above, measured directly under the
-null at 4,000 replications: 52.2% of stopping estimates were positive (i.e. symmetric, so
-the signed mean cancels to +0.002), while the mean **absolute** estimate was 0.0368 against
-0.0054 for a single look at the horizon — a **6.8x** magnification.
+Back under the null, where the signed mean cancels, the column to read is the **magnitude**.
+The CLI prints it as `mean |est|`, averaged — like every estimate here — over the
+replications that actually rejected and would therefore have shipped:
+
+| Looks | Type-I error | Mean reported \|effect\| among the runs that shipped |
+|---:|---:|---:|
+| 1 | 0.0497 | 0.0160 |
+| 20 | **0.2470** | **0.0373** |
+
+A team peeking twenty times is not only wrong five times as often; when they are wrong, the
+effect they announce is **2.3× larger**. Under the null the direction of those estimates is
+symmetric — 52.2% positive — which is exactly why the signed bias sits at +0.0002 and says
+nothing useful.
+
+Two denominators are easy to confuse here, and the difference matters. Across *all*
+replications, shipped or not, the mean absolute estimate is 0.0054 — that is simply the
+noise in a 3,841-per-arm experiment. Even a **single** look reports 0.0160 against that,
+because conditioning on significance selects for large estimates whatever the schedule.
+The 2.3× above is the part peeking is responsible for; the 3× before it is the price of
+only ever hearing about experiments that reached significance.
 
 
 
@@ -228,6 +254,9 @@ uv run ab-testing-kit boundary --n 3841 --looks 5
 
 # Does spending the alpha actually hold the error rate?
 uv run ab-testing-kit sequential --metric binary --baseline 0.10 --n 3841 --looks 1,2,3,5,10,20
+
+# What is a pre-experiment covariate worth?
+uv run ab-testing-kit cuped --metric continuous --baseline 0 --n 2000 --effect 0.05
 ```
 
 `--help` on any subcommand lists its options. Every command is deterministic given `--seed`.
@@ -276,3 +305,6 @@ pattern is identical, the intervals are wider. `boundary` is instant; it does no
   numerical integration described by Armitage, McPherson and Rowe, implemented here from the
   Brownian-motion characterisation rather than transcribed. No published boundary table was
   consulted — §5.4 says how the result was checked instead.
+- CUPED follows Deng, Xu, Kohavi and Walker's formulation (control for a pre-experiment
+  covariate, `theta = Cov(Y,X)/Var(X)`, variance falls to `1 - rho²`). The identity is
+  standard; §5.5 measures whether this implementation delivers it.

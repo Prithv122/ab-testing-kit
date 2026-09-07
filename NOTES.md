@@ -56,6 +56,46 @@ Keep it rough. Rough is the point.
   fixed-horizon test), and refining the quadrature from 401 to 1601 nodes moves nothing past
   the 5th decimal.
 
+- **Adding that column immediately caught a bad comparison in my own README.** Session 1
+  reported a "6.8x magnification" of the estimate under the null: 0.0368 for 20 looks against
+  0.0054 for one look. Those two numbers come from **different populations**. The 0.0368 is
+  the mean |estimate| among replications that *stopped and shipped*; the 0.0054 is the mean
+  |estimate| across *all* replications, shipped or not — which is just the noise level of a
+  3,841-per-arm experiment (se * sqrt(2/pi) = 0.00685 * 0.798 = 0.0055, so it checks out
+  analytically). Ratioing one against the other silently attributes the entire
+  selection-on-significance effect to peeking.
+  **The like-for-like number, both conditioned on rejection at 20,000 reps: 0.0373 at twenty
+  looks against 0.0160 at one — 2.3x.** The remaining 3x is what conditioning on significance
+  costs at *any* schedule, and a single fixed-horizon look already pays it.
+  **Learned:** the mistake was possible because the two figures were produced by different
+  ad-hoc scripts in session 1, and nothing forced them onto the same footing. Now that
+  `mean_abs_estimate` is a field on `SimulationSummary`, every table prints the conditioned
+  version and the comparison cannot drift again. Rewrote README 5.3 to give both numbers with
+  their denominators stated. This is the kind of error I would rather find in my own repo than
+  have found for me in an interview.
+
+- **Built `cuped.py` in the same session.** Straightforward next to the boundary solver — the
+  method is four lines of arithmetic — so the work was all in checking it rather than writing
+  it. Measured reduction matches rho^2 to four decimal places across the sweep, Type-I error
+  is untouched (0.0495 against a nominal 0.05), and the adjusted estimate is unbiased over all
+  replications even though theta is fitted on the same data it adjusts.
+
+- **The interesting CUPED finding is the binary attenuation**, and it closes session 1's first
+  open question. Requesting `covariate_corr=0.8` on a 10%-rate binary metric yields a realised
+  correlation of about 0.51, because the generator correlates latent normals and *then*
+  thresholds them. So the reduction is ~26%, not the ~64% the requested number suggests.
+  CUPED is not underperforming — it delivers exactly 1 - rho^2 against the correlation the
+  data actually has. I decided **not** to solve `covariate_corr` numerically so the realised
+  value matches the request. Reporting the realised correlation next to the requested one is
+  more honest and teaches the reader something true about binary covariates; hiding the gap
+  behind a solver would make the API tidier and the lesson invisible.
+
+- **`cuped_at_each_look` exists to make a bug hard to write.** `cuped_adjust` fits theta on
+  whatever experiment it is handed, so adjusting first and truncating after would let look 1
+  use a theta fitted on data that has not arrived. Nothing in this session composes CUPED with
+  sequential testing, but session 3 might, and by then I will not remember. There is a test
+  asserting the two orders give different answers.
+
 - **Added `mean_abs_estimate` to `SimulationSummary`**, which session 1's notes said to do.
   The signed bias cancels under a two-sided null, so the magnitude column is the only one
   that shows the winner's curse there. Both are now printed by the `peeking` *and*
