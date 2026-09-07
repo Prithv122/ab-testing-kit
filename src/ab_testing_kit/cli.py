@@ -9,11 +9,18 @@ come from.
 from __future__ import annotations
 
 import argparse
+import math
 from collections.abc import Sequence
 
 from ab_testing_kit.design import analytic_power, mde, sample_size, validate_power
 from ab_testing_kit.peeking import peeking_study, type_i_error_curve
-from ab_testing_kit.simulation import ExperimentSpec
+from ab_testing_kit.sequential import (
+    SPENDING_FUNCTIONS,
+    sequential_design,
+    sequential_error_curve,
+    sequential_study,
+)
+from ab_testing_kit.simulation import ExperimentSpec, SimulationSummary
 
 __all__ = ["main"]
 
@@ -102,9 +109,8 @@ def _cmd_validate_power(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_peeking(args: argparse.Namespace) -> int:
-    spec = _spec_from_args(args, args.n, args.effect)
-    label = "Type-I error" if args.effect == 0.0 else "power"
+def _print_study_preamble(args: argparse.Namespace, extra: tuple[str, str] | None = None) -> None:
+    """Header shared by the peeking and sequential tables, so the two line up on the page."""
     print(f"metric               {args.metric}")
     print(f"baseline             {args.baseline:g}")
     print(
@@ -112,26 +118,118 @@ def _cmd_peeking(args: argparse.Namespace) -> int:
     )
     print(f"n per arm (horizon)  {args.n:,}")
     print(f"alpha (two-sided)    {args.alpha:g}")
+    if extra is not None:
+        print(f"{extra[0]:<20} {extra[1]}")
     print(f"replications         {args.sims:,}  (seed {args.seed}, shared across all rows)")
     print()
-    header = f"{'looks':>6}  {label:>13}  {'95% CI':>18}  {'mean n at stop':>15}  {'est. bias':>10}"
+
+
+def _print_study_table(label: str, rows: dict[int, SimulationSummary]) -> None:
+    """One row per look count, identical in shape for the naive and the corrected rule.
+
+    ``est. bias`` is signed and ``mean |est|`` is not, and both are needed: under a two-sided
+    null the signed bias cancels to zero however inflated the individual estimates are, so
+    the magnitude column is the one that shows the winner's curse there. Both are taken over
+    the replications that rejected.
+    """
+    header = (
+        f"{'looks':>6}  {label:>13}  {'95% CI':>18}  "
+        f"{'mean n at stop':>15}  {'est. bias':>10}  {'mean |est|':>10}"
+    )
     print(header)
     print("-" * len(header))
-    for k in args.looks:
-        summary = (
+    for k, summary in rows.items():
+        lo, hi = summary.reject_rate_ci
+        print(
+            f"{k:>6}  {summary.reject_rate:>13.4f}  [{lo:>7.4f}, {hi:>7.4f}]  "
+            f"{summary.mean_n_per_arm:>15,.0f}  {summary.estimate_bias:>+10.4f}  "
+            f"{summary.mean_abs_estimate:>10.4f}"
+        )
+
+
+def _cmd_peeking(args: argparse.Namespace) -> int:
+    spec = _spec_from_args(args, args.n, args.effect)
+    _print_study_preamble(args)
+    rows = {
+        k: (
             type_i_error_curve(
                 spec, look_counts=(k,), n_sims=args.sims, seed=args.seed, alpha=args.alpha
             )[k]
             if args.effect == 0.0
             else peeking_study(spec, k, n_sims=args.sims, seed=args.seed, alpha=args.alpha)
         )
-        lo, hi = summary.reject_rate_ci
-        bias = summary.estimate_bias
-        print(
-            f"{k:>6}  {summary.reject_rate:>13.4f}  [{lo:>7.4f}, {hi:>7.4f}]  "
-            f"{summary.mean_n_per_arm:>15,.0f}  {bias:>+10.4f}"
-        )
+        for k in args.looks
+    }
+    _print_study_table("Type-I error" if args.effect == 0.0 else "power", rows)
     return 0
+
+
+def _cmd_sequential(args: argparse.Namespace) -> int:
+    spec = _spec_from_args(args, args.n, args.effect)
+    _print_study_preamble(args, extra=("spending function", args.spending))
+    rows = {
+        k: (
+            sequential_error_curve(
+                spec,
+                look_counts=(k,),
+                n_sims=args.sims,
+                seed=args.seed,
+                alpha=args.alpha,
+                spending=args.spending,
+            )[k]
+            if args.effect == 0.0
+            else sequential_study(
+                spec,
+                k,
+                n_sims=args.sims,
+                seed=args.seed,
+                alpha=args.alpha,
+                spending=args.spending,
+            )
+        )
+        for k in args.looks
+    }
+    _print_study_table("Type-I error" if args.effect == 0.0 else "power", rows)
+    return 0
+
+
+def _cmd_boundary(args: argparse.Namespace) -> int:
+    design = sequential_design(args.n, args.looks, alpha=args.alpha, spending=args.spending)
+    boundary = design.boundary
+    print(f"n per arm (horizon)  {args.n:,}")
+    print(f"looks requested      {args.looks}")
+    print(f"alpha (two-sided)    {args.alpha:g}")
+    print(f"spending function    {args.spending}")
+    print()
+    header = (
+        f"{'look':>5}  {'n per arm':>10}  {'information':>11}  "
+        f"{'critical z':>10}  {'alpha here':>11}  {'cumulative':>11}"
+    )
+    print(header)
+    print("-" * len(header))
+    rows = zip(
+        design.schedule,
+        boundary.information,
+        boundary.z,
+        boundary.increments,
+        boundary.achieved,
+        strict=True,
+    )
+    for i, (n, t, z, step, total) in enumerate(rows, start=1):
+        critical = "     never" if math.isinf(z) else f"{z:>10.4f}"
+        print(f"{i:>5}  {n:>10,}  {t:>11.4f}  {critical}  {step:>11.3e}  {total:>11.6f}")
+    print()
+    print(f"total alpha spent    {boundary.total_alpha:.6f}  (target {args.alpha:g})")
+    return 0
+
+
+def _add_spending_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--spending",
+        choices=tuple(SPENDING_FUNCTIONS),
+        default="obrien-fleming",
+        help="Alpha spending function. Default obrien-fleming.",
+    )
 
 
 def _looks(value: str) -> tuple[int, ...]:
@@ -190,6 +288,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_sim_args(p_peek, 10_000)
     p_peek.set_defaults(func=_cmd_peeking)
+
+    p_seq = sub.add_parser(
+        "sequential", help="The same schedule of looks, with the alpha budget enforced."
+    )
+    _add_metric_args(p_seq)
+    p_seq.add_argument("--n", type=int, required=True, help="Planned units per arm.")
+    p_seq.add_argument(
+        "--effect", type=float, default=0.0, help="True absolute effect. Default 0.0 (the null)."
+    )
+    p_seq.add_argument(
+        "--looks",
+        type=_looks,
+        default=(1, 2, 3, 5, 10, 20),
+        help="Comma-separated look counts. Default 1,2,3,5,10,20.",
+    )
+    _add_spending_arg(p_seq)
+    _add_sim_args(p_seq, 10_000)
+    p_seq.set_defaults(func=_cmd_sequential)
+
+    p_bound = sub.add_parser(
+        "boundary", help="Print the critical values and the alpha each look consumes."
+    )
+    p_bound.add_argument("--n", type=int, required=True, help="Planned units per arm.")
+    p_bound.add_argument("--looks", type=int, required=True, help="Number of analyses.")
+    p_bound.add_argument("--alpha", type=float, default=0.05, help="Two-sided alpha. Default 0.05.")
+    _add_spending_arg(p_bound)
+    p_bound.set_defaults(func=_cmd_boundary)
 
     return parser
 

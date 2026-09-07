@@ -260,3 +260,167 @@ class TestPeekingCommand:
         out = capsys.readouterr().out
         assert "power" in out
         assert "(alternative)" in out
+
+
+class TestSequentialCommand:
+    def test_prints_one_row_per_look_count(self, capsys: pytest.CaptureFixture[str]) -> None:
+        code = main(
+            [
+                "sequential",
+                "--metric",
+                "continuous",
+                "--baseline",
+                "0",
+                "--n",
+                "600",
+                "--looks",
+                "1,5",
+                "--sims",
+                "200",
+                "--seed",
+                "3",
+            ]
+        )
+        assert code == 0
+        out = capsys.readouterr().out
+        rows = [ln for ln in out.splitlines() if ln.split()[:1] in (["1"], ["5"])]
+        assert len(rows) == 2
+        assert "spending function    obrien-fleming" in out
+
+    def test_reports_the_magnitude_column_alongside_the_signed_bias(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Both are needed under the null; see _print_study_table."""
+        main(
+            [
+                "sequential",
+                "--metric",
+                "continuous",
+                "--baseline",
+                "0",
+                "--n",
+                "600",
+                "--looks",
+                "1",
+                "--sims",
+                "100",
+                "--seed",
+                "3",
+            ]
+        )
+        out = capsys.readouterr().out
+        assert "Type-I error" in out
+        assert "est. bias" in out
+        assert "mean |est|" in out
+
+    def test_labels_the_alternative_column_as_power(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(
+            [
+                "sequential",
+                "--metric",
+                "continuous",
+                "--baseline",
+                "0",
+                "--effect",
+                "0.2",
+                "--n",
+                "600",
+                "--looks",
+                "1",
+                "--sims",
+                "100",
+                "--seed",
+                "3",
+            ]
+        )
+        out = capsys.readouterr().out
+        assert "power" in out
+        assert "(alternative)" in out
+
+    def test_accepts_an_alternative_spending_function(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = main(
+            [
+                "sequential",
+                "--metric",
+                "continuous",
+                "--baseline",
+                "0",
+                "--n",
+                "600",
+                "--looks",
+                "1",
+                "--sims",
+                "100",
+                "--seed",
+                "3",
+                "--spending",
+                "pocock",
+            ]
+        )
+        assert code == 0
+        assert "spending function    pocock" in capsys.readouterr().out
+
+    def test_rejects_an_unknown_spending_function(self) -> None:
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(
+                [
+                    "sequential",
+                    "--metric",
+                    "binary",
+                    "--baseline",
+                    "0.1",
+                    "--n",
+                    "1000",
+                    "--spending",
+                    "haybittle-peto",
+                ]
+            )
+
+
+class TestBoundaryCommand:
+    def test_prints_one_row_per_look_and_the_budget_it_spends(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = main(["boundary", "--n", "3841", "--looks", "5"])
+        assert code == 0
+        out = capsys.readouterr().out
+        rows = [ln for ln in out.splitlines() if ln.split()[:1] in ([str(i)] for i in range(1, 6))]
+        assert len(rows) == 5
+        assert "total alpha spent    0.050000" in out
+
+    def test_shows_the_boundary_tightening_towards_the_horizon(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The point of the subcommand: the correction should be visible, not just asserted."""
+        main(["boundary", "--n", "3841", "--looks", "5"])
+        criticals = [
+            float(ln.split()[3])
+            for ln in capsys.readouterr().out.splitlines()
+            if ln.split()[:1] in ([str(i)] for i in range(1, 6))
+        ]
+        assert criticals == sorted(criticals, reverse=True)
+        assert criticals[0] > 4.0
+
+    def test_marks_an_unusable_look_as_never(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Twenty O'Brien-Fleming looks cannot spend anything at the first one."""
+        main(["boundary", "--n", "3841", "--looks", "20"])
+        out = capsys.readouterr().out
+        assert "never" in out
+        assert "total alpha spent    0.050000" in out
+
+    def test_pocock_boundary_is_flat_by_comparison(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(["boundary", "--n", "3841", "--looks", "5", "--spending", "pocock"])
+        out = capsys.readouterr().out
+        criticals = [
+            float(ln.split()[3])
+            for ln in out.splitlines()
+            if ln.split()[:1] in ([str(i)] for i in range(1, 6))
+        ]
+        assert max(criticals) - min(criticals) < 0.1
+        assert "spending function    pocock" in out
