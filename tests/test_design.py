@@ -73,6 +73,10 @@ class TestSampleSize:
         with pytest.raises(ValueError, match="sd"):
             sample_size("continuous", 0.0, 0.5, sd=-1.0)
 
+    def test_rejects_out_of_range_binary_baseline(self) -> None:
+        with pytest.raises(ValueError, match="binary baseline"):
+            sample_size("binary", baseline=1.5, mde_abs=0.02)
+
 
 class TestAnalyticPower:
     def test_hits_target_at_the_computed_sample_size(self) -> None:
@@ -103,6 +107,10 @@ class TestAnalyticPower:
     def test_rejects_unknown_metric(self) -> None:
         with pytest.raises(ValueError, match="metric"):
             analytic_power("poisson", 1.0, 0.2, 1000)  # type: ignore[arg-type]
+
+    def test_rejects_nonpositive_sd(self) -> None:
+        with pytest.raises(ValueError, match="sd"):
+            analytic_power("continuous", 0.0, 0.2, 1000, sd=-1.0)
 
 
 class TestMde:

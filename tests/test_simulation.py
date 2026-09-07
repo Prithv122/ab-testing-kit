@@ -114,6 +114,18 @@ class TestGeneration:
         exp = next(generate_many(spec, 1, seed=0))
         assert exp.covariate_correlation() == pytest.approx(rho, abs=0.02)
 
+    def test_covariate_correlation_is_zero_for_a_degenerate_arm(self) -> None:
+        """A constant covariate has no correlation to report; 0.0 rather than a nan."""
+        spec = ExperimentSpec(n_per_arm=10, metric="continuous", baseline=1.0)
+        exp = Experiment(
+            spec=spec,
+            control=np.arange(10.0),
+            treatment=np.arange(10.0),
+            control_pre=np.zeros(10),
+            treatment_pre=np.zeros(10),
+        )
+        assert exp.covariate_correlation() == 0.0
+
     def test_binary_covariate_correlation_is_attenuated_but_monotone(self) -> None:
         """Documents the latent-normal caveat rather than pretending it away."""
         spec = ExperimentSpec(n_per_arm=100_000, metric="binary", baseline=0.3, covariate_corr=0.8)

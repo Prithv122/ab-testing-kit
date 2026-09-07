@@ -65,10 +65,9 @@ def peek_schedule(
         raise ValueError(f"n_looks must be at least 1, got {n_looks}")
 
     raw = [round(n_per_arm * (i + 1) / n_looks) for i in range(n_looks)]
-    kept = sorted({n for n in raw if n >= min(min_look_size, n_per_arm)})
-    if not kept or kept[-1] != n_per_arm:
-        kept.append(n_per_arm)
-    return tuple(kept)
+    # The final look is exactly n_per_arm, and the floor is capped at n_per_arm, so the
+    # horizon always survives the filter -- the schedule cannot come back empty or short.
+    return tuple(sorted({n for n in raw if n >= min(min_look_size, n_per_arm)}))
 
 
 @dataclass(frozen=True)
