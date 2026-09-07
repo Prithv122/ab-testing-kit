@@ -224,6 +224,163 @@ only ever hearing about experiments that reached significance.
 
 
 
+### 5.4 Alpha spending keeps the 5% — and shows its working
+
+The fix for §5.2 is not "look less often". It is to decide **before any data exists** how much
+of the 5% each look may consume, and to raise the bar at every look so the total still comes
+to 5%.
+
+```bash
+uv run ab-testing-kit boundary --n 3841 --looks 5
+```
+
+```
+ look   n per arm  information  critical z   alpha here   cumulative
+--------------------------------------------------------------------
+    1         768       0.1999      4.3832    1.170e-05     0.000012
+    2       1,536       0.3999      3.1001    1.928e-03     0.001939
+    3       2,305       0.6001      2.5531    9.464e-03     0.011404
+    4       3,073       0.8001      2.2538    1.703e-02     0.028435
+    5       3,841       1.0000      2.0635    2.157e-02     0.050000
+
+total alpha spent    0.050000  (target 0.05)
+```
+
+The last line is the point: the budget is exhausted **exactly**, not approximately. The first
+look demands z = 4.38 — an effect more than four standard errors from zero — and by the
+horizon the bar has relaxed to 2.06, barely above the uncorrected 1.96. O'Brien–Fleming's
+entire character is in that column: it refuses to stop early unless the result is
+overwhelming, which is exactly why it gives up so little at the end.
+
+**These boundaries are computed here, not copied.** There is no closed form past the first
+look, because the looks are correlated — look 3 contains look 2's data. They come from the
+standard recursive integration over the Brownian sub-density of the score statistic. Since
+that is the kind of code that can be subtly wrong and still look plausible, it is checked
+two ways that share none of its logic: against a direct simulation of the Brownian motion it
+claims to integrate (200,000 paths × 6 configurations, every crossing rate within 2 SE of
+0.05), and against the fact that the Pocock boundary should come out near-constant — the
+solver returns 2.438/2.427/2.410/2.397/2.386 for five looks, which brackets the classical
+Pocock constant of 2.413 without having been told it.
+
+#### It holds
+
+Same null data, same seed, same analysis points as §5.2. The **only** thing that differs is
+the number each look is compared against.
+
+```bash
+uv run ab-testing-kit sequential --metric binary --baseline 0.10 --n 3841 --looks 1,2,3,5,10,20 --sims 20000 --seed 0
+```
+
+| Looks | Peeking (§5.2) | O'Brien–Fleming | 95% CI on the spending row |
+|---:|---:|---:|---|
+| 1 | 0.0497 | 0.0497 | [0.0468, 0.0528] |
+| 2 | 0.0837 | 0.0498 | [0.0468, 0.0529] |
+| 3 | 0.1076 | 0.0498 | [0.0469, 0.0529] |
+| 5 | 0.1403 | 0.0515 | [0.0485, 0.0547] |
+| 10 | 0.1915 | 0.0519 | [0.0489, 0.0551] |
+| 20 | **0.2470** | **0.0515** | [0.0485, 0.0547] |
+
+Every spending row's interval contains 0.05. The naive curve rises by a factor of five across
+the same schedule; this one does not move. Pocock behaves the same way (0.0497 / 0.0478 /
+0.0481 at 1, 5 and 20 looks) — the guarantee is a property of spending the budget, not of
+which shape you spend it in.
+
+#### What it costs
+
+```bash
+uv run ab-testing-kit sequential --metric binary --baseline 0.10 --n 3841 --effect 0.02 --looks 1,5,20 --sims 20000 --seed 0
+uv run ab-testing-kit sequential --metric binary --baseline 0.10 --n 3841 --effect 0.02 --looks 1,5,20 --sims 20000 --seed 0 --spending pocock
+```
+
+All rows: 20,000 replications, true effect 0.02, horizon 3,841 per arm.
+
+| Rule | Looks | Type-I error | Power | Mean n per arm | Data saved | Reported effect |
+|---|---:|---:|---:|---:|---:|---:|
+| Fixed horizon | 1 | 0.0497 | 0.8007 | 3,841 | — | 0.0224 (+12%) |
+| O'Brien–Fleming | 5 | 0.0515 | 0.7882 | 3,037 | 21% | 0.0252 (+26%) |
+| O'Brien–Fleming | 20 | 0.0515 | **0.7763** | **2,842** | **26%** | 0.0261 (+31%) |
+| Pocock | 5 | 0.0478 | 0.7170 | 2,726 | 29% | 0.0291 (+46%) |
+| Pocock | 20 | 0.0481 | 0.6950 | 2,625 | 32% | 0.0321 (+61%) |
+| Naive peeking | 20 | **0.2470** | 0.8839 | 1,707 | 56% | 0.0337 (+68%) |
+
+**O'Brien–Fleming at twenty looks buys back 26% of the sample for 2.4 points of power, and
+keeps the error rate.** That is the trade the method exists to offer, and it is a good one.
+
+Three things in that table are worth more than the headline:
+
+- **Pocock is not simply worse.** It stops sooner than OBF at every look count, which is what
+  it is designed to do. It pays 10.6 points of power for the privilege, most of it at the
+  final look, where its bar is 2.39 rather than 2.06. If the cost of running an experiment
+  for another fortnight is high and the cost of missing a real winner is low, that is the
+  right trade. Choosing a spending function is choosing where you would rather lose.
+- **Naive peeking still looks best on the columns a dashboard shows.** Highest power, least
+  data. It is the only row that ships a loser one time in four. A method's cost being
+  invisible in the metrics people watch is precisely why it survives.
+- **The winner's curse shrinks with the boundary.** OBF reports 0.0261 against a true 0.02,
+  versus peeking's 0.0337 — because a rule that will not stop early unless the evidence is
+  overwhelming stops early less often, and therefore selects on noise less hard. The
+  correction that fixes the error rate improves the estimate for free.
+
+Note that two of the twenty looks are marked `never` in the boundary table: O'Brien–Fleming
+budgets around 2e-18 for the first look of a twenty-look design, which no numerical scheme
+can honour. Those looks are given an infinite boundary and simply cannot reject; the alpha
+they do not spend rolls forward, which is why the total still lands on 0.050000. Conservative
+by construction — the design spends less than it is entitled to, never more.
+
+### 5.5 CUPED: buy precision with data you already have
+
+Everything above changes the **decision rule**. CUPED changes the **metric**, and it is the
+only lever here that makes an experiment genuinely cheaper rather than differently risky.
+
+If a pre-experiment covariate `X` predicts the outcome `Y`, then `Y - theta(X - X̄)` has the
+same expectation as `Y` — so the effect estimate stays unbiased — but its variance falls to
+`Var(Y)(1 - rho²)`. The promise is precise enough to check, so:
+
+```bash
+uv run ab-testing-kit cuped --metric continuous --baseline 0 --n 2000 --effect 0.05 --sims 20000 --seed 0
+```
+
+| Requested ρ | Realised ρ | Measured reduction | Predicted (ρ²) | Power raw | Power CUPED | Worth n × |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0.0 | 0.0000 | 0.0002 | 0.0002 | 0.3497 | 0.3503 | 1.00 |
+| 0.2 | 0.1999 | 0.0402 | 0.0402 | 0.3531 | 0.3626 | 1.04 |
+| 0.4 | 0.3999 | 0.1601 | 0.1601 | 0.3548 | 0.4072 | 1.19 |
+| 0.6 | 0.5998 | 0.3600 | 0.3599 | 0.3526 | 0.5080 | 1.56 |
+| 0.8 | 0.7998 | **0.6399** | **0.6398** | 0.3497 | **0.7541** | **2.78** |
+
+Measured reduction matches theory to four decimal places at every point. At ρ = 0.8 the
+adjustment more than **doubles power at the same sample size** (35.0% → 75.4%), which is
+worth the same as running 2.8× the traffic. It also costs nothing in correctness: under a
+true null the adjusted test's Type-I error is 0.0495, and averaged over all replications the
+adjusted estimate is unbiased even though `theta` is fitted on the very data it adjusts.
+
+#### The part that surprises people
+
+Run the same sweep on the 10% conversion rate from §5.1 and the picture changes:
+
+```bash
+uv run ab-testing-kit cuped --metric binary --baseline 0.10 --n 3841 --effect 0.02 --sims 20000 --seed 0
+```
+
+| Requested ρ | **Realised ρ** | Measured reduction | Predicted (ρ²) | Power raw | Power CUPED | Worth n × |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0.2 | 0.0814 | 0.0066 | 0.0068 | 0.8003 | 0.8030 | 1.01 |
+| 0.4 | 0.1875 | 0.0352 | 0.0354 | 0.7991 | 0.8136 | 1.04 |
+| 0.6 | 0.3251 | 0.1058 | 0.1060 | 0.7951 | 0.8394 | 1.12 |
+| 0.8 | **0.5152** | 0.2656 | 0.2657 | 0.8000 | 0.9049 | 1.36 |
+
+Asking for a correlation of 0.8 yields a realised 0.515, and so 27% variance reduction
+instead of 64%. **CUPED is not underperforming** — it delivers exactly `1 - rho²` against the
+correlation the data actually has, as the two middle columns show. The gap is in the
+covariate: this generator correlates latent normals and *then* thresholds them into 0/1, and
+thresholding destroys correlation. The same thing happens to real binary covariates, which is
+why "did the user convert last month" is a much weaker CUPED covariate than "how much did the
+user spend last month" even when both look equally predictive in a correlation matrix.
+
+This is why the sweep reports the realised correlation next to the requested one. Solving the
+generator so the two matched would have made the API tidier and this fact invisible.
+
+
 ## 6. How to run
 
 ```bash

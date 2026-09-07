@@ -163,8 +163,13 @@ Keep it rough. Rough is the point.
   `peeking.py`'s own docstring claims. Was about to write that up as a null finding.
   **What was actually happening:** the test is two-sided, so under a true null the early
   stops split symmetrically — measured 52.2% positive — and the signed mean cancels. The
-  inflation is entirely in the **magnitude**: mean |estimate| among stopped runs was 0.0368
-  vs 0.0054 for a single look at the horizon, a **6.8x** magnification.
+  inflation is entirely in the **magnitude**, not the direction.
+  **Superseded — the ratio written here originally was wrong.** I quoted "0.0368 among
+  stopped runs against 0.0054 for a single look, a 6.8x magnification", which compares two
+  different populations: the first conditions on stopping, the second does not. The
+  like-for-like figure, both conditioned on rejection at 20,000 replications, is **0.0373
+  against 0.0160 — 2.3x**. See the session 2 entry above for the diagnosis. Do not quote
+  6.8x anywhere; it is not a number this repository supports.
   **Learned:** `SimulationSummary.estimate_bias` being a *signed* mean is the right default
   for the H1 case (where direction is the whole point) but is actively misleading under H0.
   Documented both in README §5.3 rather than quietly reporting only the H1 number. If I add
