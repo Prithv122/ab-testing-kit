@@ -12,6 +12,7 @@ import argparse
 import math
 from collections.abc import Sequence
 
+from ab_testing_kit.cuped import variance_reduction_curve
 from ab_testing_kit.design import analytic_power, mde, sample_size, validate_power
 from ab_testing_kit.peeking import peeking_study, type_i_error_curve
 from ab_testing_kit.sequential import (
@@ -193,6 +194,40 @@ def _cmd_sequential(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_cuped(args: argparse.Namespace) -> int:
+    spec = _spec_from_args(args, args.n, args.effect)
+    curve = variance_reduction_curve(
+        spec, correlations=args.corr, n_sims=args.sims, seed=args.seed, alpha=args.alpha
+    )
+    print(f"metric               {args.metric}")
+    print(f"baseline             {args.baseline:g}")
+    print(f"true effect          {args.effect:g}")
+    print(f"n per arm            {args.n:,}")
+    print(f"alpha (two-sided)    {args.alpha:g}")
+    print(f"replications         {args.sims:,}  (seed {args.seed}, shared across all rows)")
+    print()
+    header = (
+        f"{'requested rho':>13}  {'realised rho':>12}  {'theta':>7}  "
+        f"{'reduction':>9}  {'predicted':>13}  {'power raw':>9}  "
+        f"{'power CUPED':>11}  {'= n x':>6}"
+    )
+    print(header)
+    print("-" * len(header))
+    for rho, comparison in curve.items():
+        print(
+            f"{rho:>13.2f}  {comparison.mean_correlation:>12.4f}  "
+            f"{comparison.mean_theta:>7.3f}  {comparison.mean_variance_reduction:>9.4f}  "
+            f"{comparison.predicted_variance_reduction:>13.4f}  "
+            f"{comparison.raw.reject_rate:>9.4f}  {comparison.adjusted.reject_rate:>11.4f}  "
+            f"{comparison.effective_sample_size_multiplier:>6.2f}"
+        )
+    print()
+    print("reduction is measured; the next column is what theory predicts from the realised rho.")
+    if args.metric == "binary":
+        print("note: a binary covariate is attenuated by the copula, so realised << requested.")
+    return 0
+
+
 def _cmd_boundary(args: argparse.Namespace) -> int:
     design = sequential_design(args.n, args.looks, alpha=args.alpha, spending=args.spending)
     boundary = design.boundary
@@ -221,6 +256,16 @@ def _cmd_boundary(args: argparse.Namespace) -> int:
     print()
     print(f"total alpha spent    {boundary.total_alpha:.6f}  (target {args.alpha:g})")
     return 0
+
+
+def _correlations(value: str) -> tuple[float, ...]:
+    try:
+        parsed = tuple(float(part) for part in value.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected comma-separated floats, got {value!r}") from exc
+    if not parsed or any(not -1.0 < rho < 1.0 for rho in parsed):
+        raise argparse.ArgumentTypeError(f"correlations must all be in (-1, 1), got {value!r}")
+    return parsed
 
 
 def _add_spending_arg(parser: argparse.ArgumentParser) -> None:
@@ -315,6 +360,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_bound.add_argument("--alpha", type=float, default=0.05, help="Two-sided alpha. Default 0.05.")
     _add_spending_arg(p_bound)
     p_bound.set_defaults(func=_cmd_boundary)
+
+    p_cuped = sub.add_parser(
+        "cuped", help="Variance reduction bought by a pre-experiment covariate."
+    )
+    _add_metric_args(p_cuped)
+    p_cuped.add_argument("--n", type=int, required=True, help="Units per arm.")
+    p_cuped.add_argument(
+        "--effect", type=float, default=0.0, help="True absolute effect. Default 0.0 (the null)."
+    )
+    p_cuped.add_argument(
+        "--corr",
+        type=_correlations,
+        default=(0.0, 0.2, 0.4, 0.6, 0.8),
+        help="Comma-separated covariate correlations. Default 0,0.2,0.4,0.6,0.8.",
+    )
+    _add_sim_args(p_cuped, 5_000)
+    p_cuped.set_defaults(func=_cmd_cuped)
 
     return parser
 

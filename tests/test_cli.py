@@ -424,3 +424,112 @@ class TestBoundaryCommand:
         ]
         assert max(criticals) - min(criticals) < 0.1
         assert "spending function    pocock" in out
+
+
+class TestCupedCommand:
+    def test_prints_one_row_per_correlation(self, capsys: pytest.CaptureFixture[str]) -> None:
+        code = main(
+            [
+                "cuped",
+                "--metric",
+                "continuous",
+                "--baseline",
+                "0",
+                "--n",
+                "800",
+                "--effect",
+                "0.1",
+                "--corr",
+                "0,0.6",
+                "--sims",
+                "120",
+                "--seed",
+                "4",
+            ]
+        )
+        assert code == 0
+        out = capsys.readouterr().out
+        rows = [ln for ln in out.splitlines() if ln.strip().startswith(("0.00", "0.60"))]
+        assert len(rows) == 2
+        assert "realised rho" in out
+
+    def test_measured_reduction_sits_next_to_the_prediction(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A number is only checkable if what it should have been is printed beside it."""
+        main(
+            [
+                "cuped",
+                "--metric",
+                "continuous",
+                "--baseline",
+                "0",
+                "--n",
+                "800",
+                "--corr",
+                "0.6",
+                "--sims",
+                "120",
+                "--seed",
+                "4",
+            ]
+        )
+        row = next(
+            ln for ln in capsys.readouterr().out.splitlines() if ln.strip().startswith("0.60")
+        ).split()
+        measured, predicted = float(row[3]), float(row[4])
+        assert measured == pytest.approx(predicted, abs=0.02)
+
+    def test_warns_about_attenuation_for_binary_covariates(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(
+            [
+                "cuped",
+                "--metric",
+                "binary",
+                "--baseline",
+                "0.2",
+                "--n",
+                "800",
+                "--corr",
+                "0.8",
+                "--sims",
+                "60",
+                "--seed",
+                "4",
+            ]
+        )
+        assert "attenuated" in capsys.readouterr().out
+
+    def test_rejects_impossible_correlations(self) -> None:
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(
+                [
+                    "cuped",
+                    "--metric",
+                    "continuous",
+                    "--baseline",
+                    "0",
+                    "--n",
+                    "800",
+                    "--corr",
+                    "0.5,1.0",
+                ]
+            )
+
+    def test_rejects_non_numeric_correlations(self) -> None:
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(
+                [
+                    "cuped",
+                    "--metric",
+                    "continuous",
+                    "--baseline",
+                    "0",
+                    "--n",
+                    "800",
+                    "--corr",
+                    "0.5,high",
+                ]
+            )
