@@ -10,7 +10,10 @@ rule you attach to it.
 So this module measures three things rather than arguing about one:
 
 1. **How closely do the two agree on the same experiments?** :func:`agreement_study` counts
-   how often the two rules reach different verdicts, and on which replications.
+   how often the two rules reach different verdicts. The answer is "almost always", and the
+   residual disagreement turns out to be a *threshold* mismatch rather than a framework one:
+   the conventional 0.95 posterior threshold is a one-sided 5% rule, twice as permissive in
+   the ship direction as the conventional two-sided 5% test it gets compared to.
 2. **What is the frequentist error rate of a Bayesian rule?** A posterior probability is not
    a Type-I error rate, but a rule that ships whenever ``P(B > A) > 0.95`` still *has* one,
    and a team running it is still wrong some fraction of the time. :func:`bayes_study`
@@ -89,8 +92,12 @@ class DecisionRule:
 
     Args:
         prob_threshold: Ship once ``P(treatment > control)`` exceeds this. ``0.95`` is the
-            conventional choice and is deliberately the mirror of a 5% two-sided alpha, so
-            the comparison in :func:`agreement_study` is like-for-like.
+            conventional choice, and it is worth being precise about what it corresponds to:
+            a **one-sided** 5% test, not a two-sided one. A conventional two-sided alpha of
+            0.05 only ships on a positive result at 2.5%, so the industry-standard 0.95
+            posterior threshold is **twice as permissive in the ship direction** as the
+            industry-standard p-value threshold. Pass ``0.975`` for the genuinely
+            like-for-like comparison; :func:`agreement_study` measures the gap either way.
         max_expected_loss: Ship only if the expected loss is also below this. ``None``
             disables the check, leaving a pure probability rule. Expressed in units of the
             metric, so 0.001 on a conversion rate means "0.1 percentage points".
@@ -283,6 +290,12 @@ def agreement_study(
     ``prob_better`` lands on essentially the same value. The frameworks are not computing
     different things here. They are computing the same thing and licensing different
     sentences about it.
+
+    Expect the disagreements to be almost entirely ``bayes_only``, and that is a threshold
+    artefact rather than a philosophical one: at the default ``prob_threshold`` of 0.95 the
+    Bayesian rule ships at a one-sided 5%, while a two-sided 5% test ships on a positive
+    result at 2.5%. Setting ``prob_threshold=0.975`` collapses the two onto each other, which
+    is the cleanest demonstration available that the gap was never about Bayes.
     """
     decision = DecisionRule() if rule is None else rule
     counts = {"both_ship": 0, "both_hold": 0, "bayes_only": 0, "frequentist_only": 0}
@@ -348,12 +361,13 @@ def bayes_peeking_study(
     estimates: list[float] = []
     ns: list[int] = []
     for experiment in generate_many(spec, n_sims, seed):
-        final = None
-        for n in schedule:
-            final = analyse(experiment.truncate(n), decision, prior_a, prior_b)
+        # peek_schedule is never empty, so the first look always gives a result to fall back
+        # on; the loop then replaces it only while the rule has not fired.
+        final = analyse(experiment.truncate(schedule[0]), decision, prior_a, prior_b)
+        for n in schedule[1:]:
             if final.ship:
                 break
-        assert final is not None  # peek_schedule never returns an empty schedule.
+            final = analyse(experiment.truncate(n), decision, prior_a, prior_b)
         shipped.append(final.ship)
         estimates.append(final.estimate)
         ns.append(final.n_per_arm)

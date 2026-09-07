@@ -12,6 +12,7 @@ import argparse
 import math
 from collections.abc import Sequence
 
+from ab_testing_kit.bayes import DecisionRule, agreement_study, bayes_peeking_study
 from ab_testing_kit.cuped import variance_reduction_curve
 from ab_testing_kit.design import analytic_power, mde, sample_size, validate_power
 from ab_testing_kit.peeking import peeking_study, type_i_error_curve
@@ -194,6 +195,70 @@ def _cmd_sequential(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_bayes(args: argparse.Namespace) -> int:
+    spec = _spec_from_args(args, args.n, args.effect)
+    rule = DecisionRule(
+        prob_threshold=args.threshold,
+        max_expected_loss=args.max_loss,
+    )
+    label = "ships a loser" if args.effect == 0.0 else "ships a winner"
+    _print_study_preamble(
+        args, extra=("decision rule", f"P(B>A) >= {args.threshold:g}" + _loss_clause(args.max_loss))
+    )
+    rows = {
+        k: bayes_peeking_study(spec, k, rule, n_sims=args.sims, seed=args.seed) for k in args.looks
+    }
+    _print_study_table(label, rows)
+    print()
+    print(
+        "A posterior is not invalidated by being looked at. A stopping rule built on one "
+        "still\nhas a frequentist error rate, and that rate is what this table measures."
+    )
+    return 0
+
+
+def _loss_clause(max_loss: float | None) -> str:
+    return "" if max_loss is None else f" and E[loss] <= {max_loss:g}"
+
+
+def _cmd_agreement(args: argparse.Namespace) -> int:
+    spec = _spec_from_args(args, args.n, args.effect)
+    print(f"metric               {args.metric}")
+    print(f"baseline             {args.baseline:g}")
+    print(f"true effect          {args.effect:g}")
+    print(f"n per arm            {args.n:,}")
+    print(f"frequentist rule     two-sided alpha = {args.alpha:g}, ship on a positive result")
+    print(f"replications         {args.sims:,}  (seed {args.seed}, shared across all rows)")
+    print()
+    header = (
+        f"{'P(B>A) >=':>10}  {'agree':>7}  {'95% CI':>18}  "
+        f"{'both ship':>10}  {'both hold':>10}  {'bayes only':>10}  {'freq only':>10}"
+    )
+    print(header)
+    print("-" * len(header))
+    gaps: list[float] = []
+    for threshold in args.thresholds:
+        summary = agreement_study(
+            spec,
+            DecisionRule(prob_threshold=threshold),
+            n_sims=args.sims,
+            seed=args.seed,
+            alpha=args.alpha,
+        )
+        lo, hi = summary.agreement_ci
+        gaps.append(summary.mean_abs_probability_gap)
+        print(
+            f"{threshold:>10.3f}  {summary.agreement_rate:>7.4f}  [{lo:>7.4f}, {hi:>7.4f}]  "
+            f"{summary.both_ship:>10,}  {summary.both_hold:>10,}  "
+            f"{summary.bayes_only:>10,}  {summary.frequentist_only:>10,}"
+        )
+    print()
+    print(f"mean |P(B>A) - (1 - p/2)|   {max(gaps):.3e}   (the two compute the same number)")
+    print("A threshold of 0.975 matches a two-sided alpha of 0.05;")
+    print("the conventional 0.95 is a one-sided 5% rule, twice as permissive in that direction.")
+    return 0
+
+
 def _cmd_cuped(args: argparse.Namespace) -> int:
     spec = _spec_from_args(args, args.n, args.effect)
     curve = variance_reduction_curve(
@@ -265,6 +330,16 @@ def _correlations(value: str) -> tuple[float, ...]:
         raise argparse.ArgumentTypeError(f"expected comma-separated floats, got {value!r}") from exc
     if not parsed or any(not -1.0 < rho < 1.0 for rho in parsed):
         raise argparse.ArgumentTypeError(f"correlations must all be in (-1, 1), got {value!r}")
+    return parsed
+
+
+def _thresholds(value: str) -> tuple[float, ...]:
+    try:
+        parsed = tuple(float(part) for part in value.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected comma-separated floats, got {value!r}") from exc
+    if not parsed or any(not 0.5 < t < 1.0 for t in parsed):
+        raise argparse.ArgumentTypeError(f"thresholds must all be in (0.5, 1), got {value!r}")
     return parsed
 
 
@@ -377,6 +452,49 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_sim_args(p_cuped, 5_000)
     p_cuped.set_defaults(func=_cmd_cuped)
+
+    p_bayes = sub.add_parser(
+        "bayes", help="A posterior stopping rule under the same continuous monitoring."
+    )
+    _add_metric_args(p_bayes)
+    p_bayes.add_argument("--n", type=int, required=True, help="Planned units per arm.")
+    p_bayes.add_argument(
+        "--effect", type=float, default=0.0, help="True absolute effect. Default 0.0 (the null)."
+    )
+    p_bayes.add_argument(
+        "--looks",
+        type=_looks,
+        default=(1, 2, 3, 5, 10, 20),
+        help="Comma-separated look counts. Default 1,2,3,5,10,20.",
+    )
+    p_bayes.add_argument(
+        "--threshold", type=float, default=0.95, help="Ship once P(B>A) reaches this. Default 0.95."
+    )
+    p_bayes.add_argument(
+        "--max-loss",
+        type=float,
+        default=None,
+        help="Also require expected loss below this, in metric units. Default: no loss check.",
+    )
+    _add_sim_args(p_bayes, 10_000)
+    p_bayes.set_defaults(func=_cmd_bayes)
+
+    p_agree = sub.add_parser(
+        "agreement", help="How often the Bayesian and frequentist rules reach the same verdict."
+    )
+    _add_metric_args(p_agree)
+    p_agree.add_argument("--n", type=int, required=True, help="Units per arm.")
+    p_agree.add_argument(
+        "--effect", type=float, default=0.0, help="True absolute effect. Default 0.0 (the null)."
+    )
+    p_agree.add_argument(
+        "--thresholds",
+        type=_thresholds,
+        default=(0.95, 0.975, 0.99),
+        help="Comma-separated posterior thresholds. Default 0.95,0.975,0.99.",
+    )
+    _add_sim_args(p_agree, 10_000)
+    p_agree.set_defaults(func=_cmd_agreement)
 
     return parser
 

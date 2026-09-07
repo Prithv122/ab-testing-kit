@@ -533,3 +533,170 @@ class TestCupedCommand:
                     "0.5,high",
                 ]
             )
+
+
+class TestBayesCommand:
+    def test_prints_one_row_per_look_count(self, capsys: pytest.CaptureFixture[str]) -> None:
+        code = main(
+            [
+                "bayes",
+                "--metric",
+                "continuous",
+                "--baseline",
+                "0",
+                "--n",
+                "600",
+                "--looks",
+                "1,5",
+                "--sims",
+                "150",
+                "--seed",
+                "6",
+            ]
+        )
+        assert code == 0
+        out = capsys.readouterr().out
+        rows = [ln for ln in out.splitlines() if ln.split()[:1] in (["1"], ["5"])]
+        assert len(rows) == 2
+        assert "ships a loser" in out
+        assert "P(B>A) >= 0.95" in out
+
+    def test_labels_the_alternative_case(self, capsys: pytest.CaptureFixture[str]) -> None:
+        main(
+            [
+                "bayes",
+                "--metric",
+                "continuous",
+                "--baseline",
+                "0",
+                "--effect",
+                "0.3",
+                "--n",
+                "600",
+                "--looks",
+                "1",
+                "--sims",
+                "100",
+                "--seed",
+                "6",
+            ]
+        )
+        assert "ships a winner" in capsys.readouterr().out
+
+    def test_reports_a_loss_budget_when_one_is_set(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = main(
+            [
+                "bayes",
+                "--metric",
+                "continuous",
+                "--baseline",
+                "0",
+                "--n",
+                "600",
+                "--looks",
+                "1",
+                "--sims",
+                "100",
+                "--seed",
+                "6",
+                "--max-loss",
+                "0.001",
+            ]
+        )
+        assert code == 0
+        assert "E[loss] <= 0.001" in capsys.readouterr().out
+
+
+class TestAgreementCommand:
+    def test_prints_one_row_per_threshold(self, capsys: pytest.CaptureFixture[str]) -> None:
+        code = main(
+            [
+                "agreement",
+                "--metric",
+                "continuous",
+                "--baseline",
+                "0",
+                "--effect",
+                "0.1",
+                "--n",
+                "800",
+                "--sims",
+                "200",
+                "--seed",
+                "6",
+            ]
+        )
+        assert code == 0
+        out = capsys.readouterr().out
+        rows = [
+            ln
+            for ln in out.splitlines()
+            if ln.startswith("    ") and ln.strip().startswith(("0.950", "0.975", "0.990"))
+        ]
+        assert len(rows) == 3
+        assert "compute the same number" in out
+
+    def test_the_matched_threshold_is_the_one_that_agrees(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A flat prior at 0.975 should agree with the two-sided test on every replication."""
+        main(
+            [
+                "agreement",
+                "--metric",
+                "continuous",
+                "--baseline",
+                "0",
+                "--effect",
+                "0.1",
+                "--n",
+                "800",
+                "--thresholds",
+                "0.95,0.975",
+                "--sims",
+                "200",
+                "--seed",
+                "6",
+            ]
+        )
+        rates = {
+            ln.split()[0]: float(ln.split()[1])
+            for ln in capsys.readouterr().out.splitlines()
+            if ln.startswith("    ") and ln.strip().startswith(("0.950", "0.975"))
+        }
+        assert rates["0.975"] == 1.0
+        assert rates["0.950"] < 1.0
+
+    def test_rejects_a_threshold_that_is_not_a_decision(self) -> None:
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(
+                [
+                    "agreement",
+                    "--metric",
+                    "continuous",
+                    "--baseline",
+                    "0",
+                    "--n",
+                    "800",
+                    "--thresholds",
+                    "0.95,0.4",
+                ]
+            )
+
+    def test_rejects_non_numeric_thresholds(self) -> None:
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(
+                [
+                    "agreement",
+                    "--metric",
+                    "continuous",
+                    "--baseline",
+                    "0",
+                    "--n",
+                    "800",
+                    "--thresholds",
+                    "0.95,most",
+                ]
+            )
