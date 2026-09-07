@@ -28,7 +28,7 @@ No services, no Docker, no GPU, no API keys. Runs entirely locally and in CI.
 - [x] Peeking demonstration: measured Type-I error inflation vs the nominal 5%
 - [x] A sequential/always-valid test that holds its error rate under the same peeking
 - [x] CUPED implemented, with measured variance reduction vs the covariate correlation
-- [ ] Bayesian analysis (posterior, P(B>A), expected loss) compared to the frequentist call
+- [x] Bayesian analysis (posterior, P(B>A), expected loss) compared to the frequentist call
 - [ ] README §5 carries real numbers, all reproducible from this repo
 - [ ] Ship gate passes (`/ship`)
 

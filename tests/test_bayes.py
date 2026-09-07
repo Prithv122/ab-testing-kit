@@ -5,9 +5,9 @@ Three claims are load-bearing here and each has a test that would fail loudly if
 * ``test_posterior_probability_is_the_one_sided_p_value`` -- with weak priors the two
   frameworks compute the same number, so any later disagreement is about thresholds or
   language, not arithmetic.
-* ``test_a_flat_prior_at_a_matched_threshold_agrees_exactly`` -- and here is the proof
-  that it *is* thresholds: zero disagreements in 400 replications, both under the null and
-  under a real effect.
+* ``test_a_matched_threshold_collapses_the_disagreement`` -- and here is the proof that it
+  *is* thresholds: matching them takes the disagreement rate from roughly 1 in 8 to roughly
+  2 in 10,000, and the residual traces to two named approximations rather than to Bayes.
 * ``test_posterior_monitoring_does_not_control_the_error_rate`` -- the claim that Bayesian
   analysis is immune to peeking, measured on the same substrate that produced §5.2.
 """
@@ -175,34 +175,27 @@ class TestAnalyse:
 
 
 class TestAgreement:
-    def test_a_flat_prior_at_a_matched_threshold_agrees_exactly(self) -> None:
+    @pytest.mark.parametrize("effect_spec", ["continuous", "binary"])
+    def test_a_matched_threshold_collapses_the_disagreement(self, effect_spec: str) -> None:
         """The punchline. 0.975 is the posterior threshold that matches two-sided alpha=0.05.
 
-        A continuous metric takes a genuinely flat prior, so the posterior mean *is* the
-        sample mean and the posterior sd *is* the standard error. At a matched threshold the
-        two frameworks then agree on every single replication -- not "rarely disagree", not
-        "mostly the same". Zero. The famous gap between them is a threshold convention.
-        """
-        for spec in (_continuous(0.0), _continuous(0.05)):
-            summary = agreement_study(spec, DecisionRule(prob_threshold=0.975), n_sims=400, seed=41)
-            assert summary.n_disagreements == 0
-            assert summary.agreement_rate == 1.0
+        Moving from the conventional 0.95 to the matched 0.975 takes the disagreement rate
+        from roughly 1 in 8 to roughly 2 in 10,000. What is left is *not* the two frameworks
+        differing. It is two approximations, both named and both tiny:
 
-    def test_only_the_prior_survives_a_matched_threshold(self) -> None:
-        """A rate metric keeps a Beta(1,1) prior, which shrinks the estimate very slightly.
+        * a rate metric keeps its Beta(1,1) prior, which shrinks the estimate a hair;
+        * a continuous metric meets Welch's **t** on the frequentist side and a **normal**
+          posterior on the Bayesian side, and those differ slightly in the tail.
 
-        So the agreement is near-total rather than total, and the residual is a real Bayesian
-        effect rather than a framework one: measured at about 1 replication in 2,000. Compare
-        against the ~120 in 2,000 the *default* threshold produces on the same data.
+        Asserted as a rate rather than an exact count, because the residual is a handful of
+        replications in tens of thousands and pinning it to zero would only be pinning this
+        seed. The rates measured at 20,000 replications are in README 5.6.
         """
-        summary = agreement_study(
-            _binary(0.02), DecisionRule(prob_threshold=0.975), n_sims=400, seed=41
-        )
-        assert summary.agreement_rate > 0.99
-        assert (
-            summary.n_disagreements
-            < agreement_study(_binary(0.02), n_sims=400, seed=41).n_disagreements
-        )
+        spec = _continuous(0.05) if effect_spec == "continuous" else _binary(0.02)
+        matched = agreement_study(spec, DecisionRule(prob_threshold=0.975), n_sims=500, seed=41)
+        conventional = agreement_study(spec, n_sims=500, seed=41)
+        assert matched.agreement_rate > 0.99
+        assert matched.n_disagreements < conventional.n_disagreements / 10
 
     def test_the_conventional_threshold_is_the_more_permissive_one(self) -> None:
         """And the disagreements run one way only, which is the diagnostic."""

@@ -9,6 +9,68 @@ Keep it rough. Rough is the point.
 
 ## Log
 
+### 2026-09-07 — session 2c: bayes.py (posterior decision rules)
+
+- **Built:** `bayes.py` — Beta-Binomial and normal posteriors, `P(B>A)`, expected loss,
+  credible intervals, plus `agreement_study` and `bayes_peeking_study`. `bayes` and
+  `agreement` CLI subcommands. 32 tests.
+
+- **The framing I settled on:** do not argue about Bayes vs frequentist, *measure* three
+  things. (1) How often do the two disagree on identical data? (2) What is the frequentist
+  error rate of a Bayesian stopping rule? (3) Does going Bayesian fix peeking? All three are
+  answerable with the substrate already in the repo, which is the payoff for having built
+  `simulation.py` the way I did in session 1.
+
+- **Caught myself writing a false claim, again, and this one was in a docstring.** I wrote
+  that a 0.95 posterior threshold "is deliberately the mirror of a 5% two-sided alpha, so the
+  comparison is like-for-like". It is not. `P(B>A) > 0.95` is a **one-sided** 5% rule. A
+  two-sided alpha of 0.05 only ships on a positive result at 2.5%. So the industry-standard
+  posterior threshold is **twice as permissive in the ship direction** as the
+  industry-standard p-value threshold, and every "Bayesian methods ship more winners"
+  comparison built on that pairing is measuring the thresholds, not the frameworks.
+  **How I caught it:** the agreement study came back with disagreements running *entirely*
+  one way (`bayes_only=174, frequentist_only=0`). A genuine philosophical difference would
+  scatter in both directions. One-directional disagreement is the signature of a threshold
+  mismatch, and it is worth remembering as a diagnostic.
+
+- **The result that came out of fixing it is the best thing in the module.** At a matched
+  threshold of 0.975, with a genuinely flat prior (continuous metric), the two frameworks
+  agree on **2,000 out of 2,000** replications under the null *and* under a real effect. Not
+  "rarely disagree" — zero. On a rate metric the Beta(1,1) prior shrinks the estimate a hair
+  and the residual is about 1 in 2,000, which is a real Bayesian effect and a measurably tiny
+  one. The mean `|P(B>A) - (1 - p/2)|` is ~4e-5. They are the same arithmetic.
+
+- **And the one that matters most in practice:** a Bayesian stopping rule does **not** control
+  the rate at which it ships losers under continuous monitoring. Same substrate, same analysis
+  points, same stop-at-first-green shape as section 5.2, and the curve inflates in the same
+  way the frequentist one does. The claim "posteriors can be monitored continuously" is true
+  about the *posterior* and false about the *stopping rule* built on it, and the two get
+  conflated constantly. Worth being precise: nothing about Bayesian machinery promises a
+  frequentist error rate, so it is not a failure of Bayes — it is people expecting a guarantee
+  that was never offered.
+
+- **Expected loss is the part that survives.** It is the one genuinely better thing here: a
+  threshold in units of the metric ("ship if the expected cost of being wrong is under 0.1pp")
+  is a business statement, and a p-value cannot be one. It also measurably curbs the peeking
+  inflation, though it does not remove it. That is the honest recommendation this module ends
+  on: use Bayesian machinery for the decision framing, and alpha spending for the error rate.
+
+- **Broke:** `test_a_loss_budget_can_veto_a_confident_result` hard-coded `max_expected_loss=1e-12`
+  and failed because the experiment I picked (effect 0.5 at n=4,000) had an expected loss of
+  **1.9e-131**. Expected loss shrinks super-exponentially in the z-statistic, so any fixed
+  threshold either never bites or always does depending on the effect size.
+  **Fixed by:** setting the budget relative to the loss that experiment actually carries.
+  **Learned:** worth remembering when advising anyone to set a loss threshold — the quantity
+  spans 100+ orders of magnitude over an ordinary range of effect sizes, so the threshold has
+  to be reasoned about in metric units against a real MDE, never picked as a round number.
+
+- **Deliberately not done:** exact Beta-Binomial `P(B>A)` by the summation identity. The
+  normal approximation to the posterior is accurate to ~1e-4 here and roughly 400x cheaper,
+  which is what keeps a 20,000-replication monitoring study to minutes. Tested against direct
+  sampling from the posterior rather than assumed.
+
+---
+
 ### 2026-09-07 — session 2a: sequential.py (O'Brien–Fleming alpha spending)
 
 - **Built:** `sequential.py` — two spending functions (O'Brien–Fleming, Pocock), the boundary
@@ -193,6 +255,9 @@ Keep it rough. Rough is the point.
 | Approach | Why rejected |
 |---|---|
 | **mSPRT** for the sequential test | Locked to group-sequential alpha spending instead. mSPRT is more conceptually and implementationally heavy than this toolkit's teaching objective needs — it requires choosing a mixing distribution, and the resulting boundary is hard to inspect. With O'Brien–Fleming-style alpha spending a reader can *see* the significance boundary tighten as looks accumulate, and can check the spent alpha sums to 0.05. Explainability is the deliverable here. |
+| **Arguing** Bayesian vs frequentist rather than measuring the difference | Every blog post already does this and none of them run the comparison. The repo has a substrate that makes it measurable on identical data with a known truth, so not measuring it would waste the one advantage this project has. |
+| Exact Beta-Binomial P(B>A) via the summation identity | ~400x slower for ~1e-4 of accuracy at these sample sizes, which would have put the monitoring study out of reach. The normal approximation is checked against direct posterior sampling instead of assumed. |
+| Comparing a 0.95 posterior threshold against a two-sided alpha of 0.05 and calling it like-for-like | It is not like-for-like — 0.95 is a one-sided 5% rule and ships twice as readily. Both thresholds are now reported, and the matched one (0.975) is what demonstrates the frameworks agree. |
 | **Quoting a published boundary table** instead of solving for it | The entire premise of the repo is that claims are checked here, not cited. A table I cannot re-derive is a citation. Solving it also means the boundary adapts to whatever schedule `peek_schedule` produces, including the uneven ones that come out of `min_look_size` dropping early looks. |
 | Clamping an unresolvable alpha increment to a large finite z | Arbitrary — the number would be picked to look reasonable rather than derived. `inf` says the true thing: this look cannot reject. |
 | Overwriting `TestResult.significant` with the sequential verdict | Would destroy the like-for-like comparison between the naive and corrected rules on identical data, which is the whole demonstration. Kept both, documented the distinction. |
@@ -207,6 +272,15 @@ Keep it rough. Rough is the point.
 
 ## Open questions
 
+- [ ] The Bayesian peeking result uses a flat/weak prior. A genuinely informative prior
+      (a real platform has hundreds of past experiments saying most effects are near zero)
+      should shrink early estimates hard and blunt the inflation. That is the strongest
+      version of the "Bayesian methods handle peeking better" argument and I have not tested
+      it — `bayes_peeking_study` takes `prior_a`/`prior_b`, so it is a sweep away.
+- [ ] Expected loss is computed against a point null of zero difference. Real decisions have a
+      cost of switching, so the relevant comparison is usually against a threshold of
+      practical significance rather than against zero. Would change the numbers and probably
+      the conclusion about what the loss rule is worth.
 - [ ] Information fraction is taken as `n_k / n_max`, which assumes the outcome variance is
       constant across looks. Under the null it is. Under a real alternative the treatment arm
       variance differs slightly, so the realised information fraction drifts from the planned
