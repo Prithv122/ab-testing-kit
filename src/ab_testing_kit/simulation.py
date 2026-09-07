@@ -285,6 +285,7 @@ class SimulationSummary:
     reject_rate: float
     reject_rate_ci: tuple[float, float]
     mean_estimate: float
+    mean_abs_estimate: float
     mean_n_per_arm: float
     true_effect: float
 
@@ -294,6 +295,13 @@ class SimulationSummary:
 
         Non-zero here is the winner's curse: a rule that stops as soon as the estimate looks
         large reports estimates that are, on average, too large.
+
+        This is a *signed* mean, which makes it the right summary under a true alternative
+        and a misleading one under the null: a two-sided rule stops on spuriously-positive
+        and spuriously-negative replications in roughly equal numbers, so the signed mean
+        cancels to ~0 no matter how inflated the individual estimates are. Read
+        ``mean_abs_estimate`` in that case. Session 1 nearly shipped the cancellation as a
+        null finding; see README 5.3.
         """
         return self.mean_estimate - self.true_effect
 
@@ -307,8 +315,8 @@ def summarize(
 ) -> SimulationSummary:
     """Aggregate per-replication outcomes into a :class:`SimulationSummary`.
 
-    ``mean_estimate`` is taken over the replications that *rejected*, because that is the
-    subset an experimenter would actually act on and ship.
+    ``mean_estimate`` and ``mean_abs_estimate`` are both taken over the replications that
+    *rejected*, because that is the subset an experimenter would actually act on and ship.
     """
     n_sims = len(rejected)
     if n_sims == 0:
@@ -325,6 +333,7 @@ def summarize(
         reject_rate=n_rejected / n_sims,
         reject_rate_ci=wilson_interval(n_rejected, n_sims, confidence),
         mean_estimate=float(winners.mean()) if n_rejected else float("nan"),
+        mean_abs_estimate=float(np.abs(winners).mean()) if n_rejected else float("nan"),
         mean_n_per_arm=float(np.asarray(ns, dtype=float).mean()),
         true_effect=true_effect,
     )
