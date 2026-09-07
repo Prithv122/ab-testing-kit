@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Experiment design and analysis toolkit: power analysis, peeking/sequential testing, CUPED variance reduction, and Bayesian vs frequentist decision rules."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "numpy>=2.5.3",
+    "scipy>=1.18.1",
+]
 
 # Most projects here ship a CLI. Entry points REQUIRE a real build backend —
 # a uv virtual project ([tool.uv] package = false) installs nothing, so the
@@ -13,7 +16,7 @@ dependencies = []
 # No-CLI projects (static sites, notebooks-only): delete [project.scripts];
 # the build backend is harmless to keep.
 [project.scripts]
-ab-testing-kit = "abkit.cli:main"
+ab-testing-kit = "ab_testing_kit.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -22,7 +25,7 @@ build-backend = "hatchling.build"
 # ⚠️ When /new-project renames src/app, update BOTH the line below AND the
 # [project.scripts] target above.
 [tool.hatch.build.targets.wheel]
-packages = ["src/abkit"]
+packages = ["src/ab_testing_kit"]
 
 [dependency-groups]
 dev = [
