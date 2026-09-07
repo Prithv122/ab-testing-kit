@@ -18,13 +18,14 @@ simulation in this repo**, not quoted from a blog post.
 
 ## Stack
 
-Python 3.13 · numpy · scipy · pandas · matplotlib · pytest · ruff · uv.
+Python 3.13 · numpy · scipy · pytest · ruff · uv. (matplotlib arrives with the notebook
+in session 3; pandas is not needed and was not added.)
 No services, no Docker, no GPU, no API keys. Runs entirely locally and in CI.
 
 ## Acceptance criteria
 
-- [ ] Power / MDE calculator for proportions and means, validated against simulation
-- [ ] Peeking demonstration: measured Type-I error inflation vs the nominal 5%
+- [x] Power / MDE calculator for proportions and means, validated against simulation
+- [x] Peeking demonstration: measured Type-I error inflation vs the nominal 5%
 - [ ] A sequential/always-valid test that holds its error rate under the same peeking
 - [ ] CUPED implemented, with measured variance reduction vs the covariate correlation
 - [ ] Bayesian analysis (posterior, P(B>A), expected loss) compared to the frequentist call
@@ -38,5 +39,10 @@ No services, no Docker, no GPU, no API keys. Runs entirely locally and in CI.
   error-rate claim needs a known true effect to be checkable against. Say this plainly in the
   README next to every number, per the anti-slop rule.
 - **Seed everything.** Tests assert on simulation output; unseeded RNG means flaky CI.
+- **Tests check correctness, the CLI produces results.** Do not raise `n_sims` in tests to
+  sharpen a number — run the CLI at 20,000 reps instead and quote the command. Keeps the
+  suite near 60s.
+- `estimate_bias` is a *signed* mean, so it cancels to ~0 under a two-sided null. Read
+  magnitude, not sign, when the true effect is zero. See README §5.3.
 - Local pytest needs `--basetemp=<scratchpad>/pt` (sandbox blocks `%TEMP%`). Never put that
   in `pyproject.toml`.
