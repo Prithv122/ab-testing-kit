@@ -30,7 +30,7 @@ No services, no Docker, no GPU, no API keys. Runs entirely locally and in CI.
 - [x] CUPED implemented, with measured variance reduction vs the covariate correlation
 - [x] Bayesian analysis (posterior, P(B>A), expected loss) compared to the frequentist call
 - [x] README §5 carries real numbers, all reproducible from this repo
-- [x] Ship gate passes (`/ship`)
+- [x] Ship gate passes
 
 ## Project-specific notes
 
